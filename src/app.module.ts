@@ -1,8 +1,24 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule } from './config/config.module.js';
+import { DatabaseModule } from './database/database.module.js';
+import { HealthModule } from './health/health.module.js';
+import { LeaderboardModule } from './leaderboard/leaderboard.module.js';
+import { MessagingModule } from './messaging/messaging.module.js';
+import { ScoringModule } from './scoring/scoring.module.js';
 
 /**
- * Composition root. Feature modules are wired in as they appear; it is
- * deliberately empty while the skeleton is being laid out.
+ * Composition root. The API and the consumer live in one process: they share
+ * the same database connection pool and the same scoring code, and splitting
+ * them would be two deployables to prove one point.
  */
-@Module({})
+@Module({
+  imports: [
+    ConfigModule,
+    DatabaseModule,
+    ScoringModule,
+    MessagingModule,
+    LeaderboardModule,
+    HealthModule,
+  ],
+})
 export class AppModule {}
