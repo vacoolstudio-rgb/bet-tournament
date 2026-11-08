@@ -195,11 +195,11 @@ player_id ASC`.** Кто набрал раньше, тот выше; позиц�
 
 | Решение | Выбор | Почему |
 |---|---|---|
-| Рантайм | Node 22 LTS, TypeScript 5.x, strict | |
-| Фреймворк | NestJS 11 | по ТЗ |
-| ✅ RabbitMQ | `@golevelup/nestjs-rabbitmq` | нужен topic-exchange, DLX, ручной ack, prefetch. `@nestjs/microservices` RMQ-транспорт заточен под RPC/одну очередь и топологию с DLX описывает плохо. Альтернатива: `amqplib` + `amqp-connection-manager` руками (больше кода, полный контроль) |
-| ✅ БД-слой | TypeORM 0.3 + явные SQL-миграции, `synchronize: false` | как в payhub, миграции читаемые и ревьюятся. Горячий путь (upsert с инкрементом) пишется сырым SQL |
-| Валидация конфига | zod, падать на старте | |
+| Рантайм | Node 26 (как локально, `v26.9.0`), `engines: >=24`, TypeScript 5.x, strict | один и тот же мажор в dev, Docker и CI — иначе расхождение вылезет на нативных модулях |
+| Фреймворк | NestJS 12.4 | по ТЗ. 11 в первой ревизии плана — устаревшая версия; payhub уже на 12, `@golevelup/nestjs-rabbitmq@9` в peer-ах держит `^11.1.24 \|\| ^12.0.0` |
+| ✅ RabbitMQ | `@golevelup/nestjs-rabbitmq@9.1` | нужен topic-exchange, DLX, ручной ack, prefetch. `@nestjs/microservices` RMQ-транспорт заточен под RPC/одну очередь и топологию с DLX описывает плохо. Альтернатива: `amqplib` + `amqp-connection-manager` руками (больше кода, полный контроль) |
+| ✅ БД-слой | TypeORM 1.1 + явные SQL-миграции, `synchronize: false` | как в payhub, миграции читаемые и ревьюятся. Горячий путь (upsert с инкрементом) пишется сырым SQL |
+| Валидация конфига | zod 4, падать на старте | |
 | Валидация событий | class-validator DTO на входе консьюмера | |
 | Деньги | `decimal.js` | |
 | Логи | `nestjs-pino`, structured, `betId`/`playerId`/`eventType` в контексте | |
@@ -614,3 +614,7 @@ TOURNAMENT_STARTS_AT / TOURNAMENT_ENDS_AT        # ISO-8601
 валют (беру текущие из конфига, фиксирую применённый курс в строке ставки); админка;
 шардирование и Redis-кеш лидерборда; outbox для исходящих событий — сервис ничего не
 публикует; k8s-манифесты.
+
+Версии в §4 поправлены по факту проверки реестра npm (8 ноя 2026): NestJS 12.4,
+TypeORM 1.1, golevelup 9.1, zod 4, Node 26. В первой ревизии плана стояли Nest 11,
+TypeORM 0.3 и Node 22 — сами инструменты те же, устарели только мажоры.
