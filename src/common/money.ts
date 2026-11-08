@@ -24,6 +24,18 @@ Decimal.set({ precision: 40 });
  *  - points  NUMERIC(20,6) — winAmount converted to USD, kept exact so a
  *            rollback can subtract precisely what was added.
  */
+/**
+ * Precision of every numeric money column.
+ *
+ * Shared with the entities so the scales below are not repeated in column
+ * decorators. A scale that disagrees with its column is not an error anywhere:
+ * Postgres rounds the value to the column's scale on the way in, silently, and
+ * rounding is exactly what this project refuses to do with points. The
+ * migration's SQL is the third place these numbers live, and it is checked
+ * against them in `test/integration/column-scales.spec.ts`.
+ */
+export const COLUMN_PRECISION = 20;
+
 export const MONEY_SCALE = 4;
 export const RATE_SCALE = 8;
 export const POINTS_SCALE = 6;

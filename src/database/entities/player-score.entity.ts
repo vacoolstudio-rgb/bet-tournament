@@ -1,4 +1,5 @@
 import { Column, Entity, PrimaryColumn } from 'typeorm';
+import { COLUMN_PRECISION, POINTS_SCALE } from '../../common/money.js';
 
 /**
  * The leaderboard aggregate: one row per player per tournament, maintained by
@@ -13,7 +14,7 @@ export class PlayerScore {
   playerId: string;
 
   /** Exact points; the API exposes both this and its floor. */
-  @Column({ type: 'numeric', precision: 20, scale: 6, default: 0 })
+  @Column({ type: 'numeric', precision: COLUMN_PRECISION, scale: POINTS_SCALE, default: 0 })
   points: string;
 
   /** Settled bets counted towards the tournament, losing ones included. */

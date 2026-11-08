@@ -81,9 +81,16 @@ export function buildTopology({ retryTtlMs }: TopologyOptions): Topology {
             // restart.
             'x-queue-type': 'quorum',
             'x-dead-letter-exchange': EXCHANGE_RETRY,
-            // Not the retry mechanism — a backstop. If a bug in the consumer
-            // makes every delivery fail, this stops the TTL loop from running
-            // forever.
+            // Bounds redelivery *within one residency*: a handler that dies
+            // without settling, or a delivery the broker repeats after a
+            // connection drops. It does not bound the TTL cycle, however much
+            // it looks like it should — a rejected message leaves the queue and
+            // comes back as a new one, with its delivery count at one again.
+            // Measured: with a limit of 3, thirty deliveries in twelve seconds
+            // and `delivery_limit` never recorded. What ends the cycle is
+            // `RABBITMQ_MAX_ATTEMPTS`, counted from `x-death` — see
+            // `delivery-attempts.ts`, and the test beside this in
+            // `topology.spec.ts`.
             'x-delivery-limit': 20,
           },
         },

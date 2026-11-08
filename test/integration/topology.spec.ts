@@ -147,6 +147,39 @@ describe('the retry hop', () => {
     expect(xDeath.find((entry) => entry.queue === QUEUE_BETS)?.count).toBe(2);
   });
 
+  it('is not bounded by x-delivery-limit, which the TTL hop resets', async () => {
+    // `x-delivery-limit` reads like the thing that stops a message cycling
+    // forever. It is not, and relying on it would be a mistake worth spelling
+    // out: a rejected message is dead-lettered out of the queue and the TTL
+    // hop publishes it back as a new message, so its delivery count starts at
+    // one again on every round. Measured with a limit of 3 on a throwaway
+    // topology: thirty deliveries in twelve seconds, and `delivery_limit`
+    // never appeared in `x-death` at all.
+    //
+    // What the limit does bound is repeated redelivery within one residency —
+    // a handler that never settles, or redelivery after a connection drops.
+    // What bounds the retry cycle is the attempt counter below.
+    const limit = topology.queues.find((queue) => queue.name === QUEUE_BETS)?.options.arguments?.[
+      'x-delivery-limit'
+    ];
+    expect(limit).toBeTypeOf('number');
+
+    broker.publish(EXCHANGE_BETS, ROUTING_KEY_SETTLED, settledEvent());
+
+    // More rounds than any sane limit would allow if it accumulated.
+    let message = await broker.take(QUEUE_BETS);
+    for (let round = 0; round < 4; round += 1) {
+      broker.nack(message, false);
+      message = await broker.take(QUEUE_BETS, 5_000);
+    }
+    broker.ack(message);
+
+    const xDeath = message.properties.headers?.['x-death'] as { reason: string; count: number }[];
+    // Still going after four rounds, and the only reason recorded is ours.
+    expect(attemptFromHeaders(message.properties.headers)).toBe(5);
+    expect(xDeath.map((entry) => entry.reason)).not.toContain('delivery_limit');
+  });
+
   it('is counted as the attempt number the classifier sees', async () => {
     broker.publish(EXCHANGE_BETS, ROUTING_KEY_SETTLED, settledEvent());
 

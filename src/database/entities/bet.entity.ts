@@ -1,4 +1,5 @@
 import { Column, Entity, PrimaryColumn } from 'typeorm';
+import { COLUMN_PRECISION, MONEY_SCALE, POINTS_SCALE, RATE_SCALE } from '../../common/money.js';
 import { CURRENCY_MAX_LENGTH } from '../../common/currency.js';
 
 /**
@@ -36,15 +37,27 @@ export class Bet {
   @Column({ type: 'varchar', length: CURRENCY_MAX_LENGTH, nullable: true })
   currency: string | null;
 
-  @Column({ type: 'numeric', precision: 20, scale: 4, nullable: true })
+  @Column({ type: 'numeric', precision: COLUMN_PRECISION, scale: MONEY_SCALE, nullable: true })
   stake: string | null;
 
-  @Column({ name: 'win_amount', type: 'numeric', precision: 20, scale: 4, nullable: true })
+  @Column({
+    name: 'win_amount',
+    type: 'numeric',
+    precision: COLUMN_PRECISION,
+    scale: MONEY_SCALE,
+    nullable: true,
+  })
   winAmount: string | null;
 
   /** The rate the points were computed with, kept so an audit does not depend
    * on today's config. */
-  @Column({ name: 'fx_rate', type: 'numeric', precision: 20, scale: 8, nullable: true })
+  @Column({
+    name: 'fx_rate',
+    type: 'numeric',
+    precision: COLUMN_PRECISION,
+    scale: RATE_SCALE,
+    nullable: true,
+  })
   fxRate: string | null;
 
   /**
@@ -52,7 +65,13 @@ export class Bet {
    * value instead of recomputing the formula: the configured rate may have
    * changed between the two events.
    */
-  @Column({ name: 'points_awarded', type: 'numeric', precision: 20, scale: 6, default: 0 })
+  @Column({
+    name: 'points_awarded',
+    type: 'numeric',
+    precision: COLUMN_PRECISION,
+    scale: POINTS_SCALE,
+    default: 0,
+  })
   pointsAwarded: string;
 
   @Column({ name: 'settled_at', type: 'timestamptz', nullable: true })
