@@ -45,10 +45,31 @@ export function validateEvent<T extends object>({ dto, payload }: ValidateEventI
     );
   }
 
-  const event = plainToInstance(dto, payload);
-  // `whitelist` drops properties the contract does not declare, which is what
-  // makes a producer adding a field a non-event rather than an outage.
-  const failures = validateSync(event, { whitelist: true });
+  let event: T;
+  let failures: ReturnType<typeof validateSync>;
+
+  try {
+    event = plainToInstance(dto, payload);
+    // `whitelist` drops properties the contract does not declare, which is
+    // what makes a producer adding a field a non-event rather than an outage.
+    failures = validateSync(event, { whitelist: true });
+  } catch (error) {
+    // Transforming or validating a payload can throw rather than return
+    // failures — a body nested deeply enough overflows the stack inside
+    // class-transformer's recursion, and a getter on a plain object can throw
+    // anything at all.
+    //
+    // Whatever it was, it is a property of this payload and will happen again
+    // on every redelivery, so it belongs here as poison rather than escaping
+    // as a generic error. Uncaught, the classifier reads it as infrastructure
+    // and sends the message round the retry hop for its whole budget: five
+    // deliveries and forty seconds spent on a message that can never be read.
+    throw new PoisonMessageError(
+      'invalid_schema',
+      `Event body could not be read: ${error instanceof Error ? error.message : String(error)}`,
+      { received: describe(payload) },
+    );
+  }
 
   if (failures.length > 0) {
     throw new PoisonMessageError(

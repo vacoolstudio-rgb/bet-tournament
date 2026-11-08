@@ -54,8 +54,10 @@ export const MAX_POINTS = '99999999999999.999999';
  * Shape of an acceptable money amount: up to 13 integer digits and up to
  * {@link MONEY_SCALE} fraction digits, no sign, no exponent.
  *
- * Exponent notation is rejected rather than parsed: `1e3` in a payload is far
- * more likely to be a producer bug than a deliberate 1000.
+ * Exponent notation in a *string* is rejected rather than parsed: `"1e3"` in a
+ * payload is far more likely to be a producer bug than a deliberate 1000. A
+ * JSON *number* written as `1e3` is a different matter — by the time it is
+ * parsed it is indistinguishable from 1000, and `String()` renders it as such.
  */
 export const MONEY_PATTERN = /^\d{1,13}(\.\d{1,4})?$/;
 

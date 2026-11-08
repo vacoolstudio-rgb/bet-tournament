@@ -1,9 +1,15 @@
 import { Decimal } from 'decimal.js';
 import { PoisonMessageError, UnknownCurrencyError } from '../../../src/common/errors.js';
+import { MAX_EVENT_BYTES } from '../../../src/messaging/contracts/index.js';
 import { BetEventProcessor } from '../../../src/messaging/bet-event.processor.js';
 import { ROUTING_KEY_ROLLBACK, ROUTING_KEY_SETTLED } from '../../../src/messaging/topology.js';
 import type { ScoringPort } from '../../../src/scoring/scoring.contract.js';
 import { rollbackEvent, settledEvent } from '../../support/builders.js';
+
+/** A delivery of a realistic size; the limit has its own tests. */
+function delivery(routingKey: string, payload: unknown) {
+  return { routingKey, payload, sizeBytes: JSON.stringify(payload ?? '').length };
+}
 
 function scoringFake() {
   return {
@@ -19,10 +25,9 @@ describe('BetEventProcessor', () => {
       scoring.settle.mockResolvedValue({ status: 'scored', pointsAwarded: '11.232000' });
       const processor = new BetEventProcessor(scoring);
 
-      await processor.process({
-        routingKey: ROUTING_KEY_SETTLED,
-        payload: settledEvent({ stake: 10, winAmount: '10.4000' }),
-      });
+      await processor.process(
+        delivery(ROUTING_KEY_SETTLED, settledEvent({ stake: 10, winAmount: '10.4000' })),
+      );
 
       const command = scoring.settle.mock.calls[0]?.[0];
       // Amounts arrive as Decimal and the timestamp as a Date: the domain
@@ -46,10 +51,7 @@ describe('BetEventProcessor', () => {
       scoring.settle.mockResolvedValue(outcome);
 
       await expect(
-        new BetEventProcessor(scoring).process({
-          routingKey: ROUTING_KEY_SETTLED,
-          payload: settledEvent(),
-        }),
+        new BetEventProcessor(scoring).process(delivery(ROUTING_KEY_SETTLED, settledEvent())),
       ).resolves.toBe(reason);
     });
 
@@ -57,10 +59,9 @@ describe('BetEventProcessor', () => {
       const scoring = scoringFake();
 
       await expect(
-        new BetEventProcessor(scoring).process({
-          routingKey: ROUTING_KEY_SETTLED,
-          payload: settledEvent({ settledAt: '2026-11-15T10:00:00' }),
-        }),
+        new BetEventProcessor(scoring).process(
+          delivery(ROUTING_KEY_SETTLED, settledEvent({ settledAt: '2026-11-15T10:00:00' })),
+        ),
       ).rejects.toThrow(PoisonMessageError);
       expect(scoring.settle).not.toHaveBeenCalled();
     });
@@ -70,10 +71,9 @@ describe('BetEventProcessor', () => {
       scoring.settle.mockRejectedValue(new UnknownCurrencyError('XYZ'));
 
       await expect(
-        new BetEventProcessor(scoring).process({
-          routingKey: ROUTING_KEY_SETTLED,
-          payload: settledEvent({ currency: 'XYZ' }),
-        }),
+        new BetEventProcessor(scoring).process(
+          delivery(ROUTING_KEY_SETTLED, settledEvent({ currency: 'XYZ' })),
+        ),
       ).rejects.toBeInstanceOf(UnknownCurrencyError);
     });
   });
@@ -86,14 +86,16 @@ describe('BetEventProcessor', () => {
       // The regression this guards: a rollback carrying a currency that is no
       // longer configured, and a settledAt outside the tournament window.
       // Both must be ignored, or the points stay credited forever.
-      await new BetEventProcessor(scoring).process({
-        routingKey: ROUTING_KEY_ROLLBACK,
-        payload: rollbackEvent({
-          currency: 'XYZ',
-          settledAt: '2020-01-01T00:00:00.000Z',
-          winAmount: '999.0000',
-        }),
-      });
+      await new BetEventProcessor(scoring).process(
+        delivery(
+          ROUTING_KEY_ROLLBACK,
+          rollbackEvent({
+            currency: 'XYZ',
+            settledAt: '2020-01-01T00:00:00.000Z',
+            winAmount: '999.0000',
+          }),
+        ),
+      );
 
       expect(scoring.rollback).toHaveBeenCalledWith({
         betId: rollbackEvent().betId,
@@ -110,10 +112,7 @@ describe('BetEventProcessor', () => {
       scoring.rollback.mockResolvedValue(outcome);
 
       await expect(
-        new BetEventProcessor(scoring).process({
-          routingKey: ROUTING_KEY_ROLLBACK,
-          payload: rollbackEvent(),
-        }),
+        new BetEventProcessor(scoring).process(delivery(ROUTING_KEY_ROLLBACK, rollbackEvent())),
       ).resolves.toBe(reason);
     });
 
@@ -121,12 +120,47 @@ describe('BetEventProcessor', () => {
       const scoring = scoringFake();
 
       await expect(
-        new BetEventProcessor(scoring).process({
-          routingKey: ROUTING_KEY_ROLLBACK,
-          payload: { playerId: rollbackEvent().playerId },
-        }),
+        new BetEventProcessor(scoring).process(
+          delivery(ROUTING_KEY_ROLLBACK, { playerId: rollbackEvent().playerId }),
+        ),
       ).rejects.toThrow(PoisonMessageError);
       expect(scoring.rollback).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('an oversized body', () => {
+    it('is refused by size, before anything walks its structure', async () => {
+      // A bet event is a few hundred bytes. Refusing by size costs the same
+      // whatever the body contains, which is the point: the expensive shapes
+      // are exactly the ones an attacker would choose.
+      const scoring = scoringFake();
+
+      try {
+        await new BetEventProcessor(scoring).process({
+          routingKey: ROUTING_KEY_SETTLED,
+          payload: settledEvent(),
+          sizeBytes: MAX_EVENT_BYTES + 1,
+        });
+        expect.unreachable('should have thrown');
+      } catch (error) {
+        expect(error).toBeInstanceOf(PoisonMessageError);
+        expect((error as PoisonMessageError).reason).toBe('invalid_schema');
+      }
+
+      expect(scoring.settle).not.toHaveBeenCalled();
+    });
+
+    it('accepts a body right at the limit', async () => {
+      const scoring = scoringFake();
+      scoring.settle.mockResolvedValue({ status: 'scored', pointsAwarded: '11.232000' });
+
+      await expect(
+        new BetEventProcessor(scoring).process({
+          routingKey: ROUTING_KEY_SETTLED,
+          payload: settledEvent(),
+          sizeBytes: MAX_EVENT_BYTES,
+        }),
+      ).resolves.toBe('scored');
     });
   });
 
@@ -135,10 +169,7 @@ describe('BetEventProcessor', () => {
       const scoring = scoringFake();
 
       try {
-        await new BetEventProcessor(scoring).process({
-          routingKey: 'bet.cashout',
-          payload: settledEvent(),
-        });
+        await new BetEventProcessor(scoring).process(delivery('bet.cashout', settledEvent()));
         expect.unreachable('should have thrown');
       } catch (error) {
         expect(error).toBeInstanceOf(PoisonMessageError);

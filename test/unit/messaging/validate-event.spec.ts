@@ -58,6 +58,23 @@ describe('validateEvent', () => {
     expect(() => validateEvent({ dto: BetSettledEventDto, payload })).toThrow(PoisonMessageError);
   });
 
+  it('parks a body nested deeply enough to overflow the stack', () => {
+    // Found by fuzzing the live service. class-transformer recurses into the
+    // structure, so a deep enough body throws RangeError instead of returning
+    // validation failures — and an error escaping from here is read as
+    // infrastructure, which sends a message that can never be read round the
+    // retry hop for its entire budget.
+    const deep = JSON.parse(`${'['.repeat(5_000)}${']'.repeat(5_000)}`) as unknown;
+
+    try {
+      validateEvent({ dto: BetSettledEventDto, payload: { ...settledEvent(), junk: deep } });
+      expect.unreachable('should have thrown');
+    } catch (error) {
+      expect(error).toBeInstanceOf(PoisonMessageError);
+      expect((error as PoisonMessageError).reason).toBe('invalid_schema');
+    }
+  });
+
   it('classifies the failure as a schema problem and names the fields', () => {
     try {
       validateEvent({ dto: BetSettledEventDto, payload: settledEvent({ currency: 'eur' }) });

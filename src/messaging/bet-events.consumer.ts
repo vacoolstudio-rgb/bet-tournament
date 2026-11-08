@@ -55,7 +55,11 @@ export class BetEventsConsumer implements OnModuleInit {
     const routingKey = message.fields.routingKey;
 
     try {
-      const reason = await this.processor.process({ routingKey, payload });
+      const reason = await this.processor.process({
+        routingKey,
+        payload,
+        sizeBytes: message.content.length,
+      });
       this.metrics.recordAck(reason);
 
       return 'ack';

@@ -62,7 +62,13 @@ describe('BetEventsConsumer', () => {
 
     await subject.handle(payload, message('bet.rollback'));
 
-    expect(processor.process).toHaveBeenCalledWith({ routingKey: 'bet.rollback', payload });
+    expect(processor.process).toHaveBeenCalledWith({
+      routingKey: 'bet.rollback',
+      payload,
+      // The raw size, so the processor can refuse an oversized body before
+      // anything walks its structure.
+      sizeBytes: expect.any(Number) as number,
+    });
   });
 
   it('hands the classifier the attempt number from the headers', async () => {

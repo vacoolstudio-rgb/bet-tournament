@@ -1,12 +1,24 @@
 import type { ConsumeMessage } from 'amqplib';
 import type { AckReason, FailureOutcome, ParkOutcome } from './message-outcome.js';
 
+/**
+ * Largest body this service will read.
+ *
+ * A bet event is a few hundred bytes; anything approaching this is a producer
+ * bug or an attempt to make the consumer do expensive work. Rejected by size
+ * before anything walks the structure, so the cost of refusing it does not
+ * depend on what is inside.
+ */
+export const MAX_EVENT_BYTES = 64 * 1024;
+
 /** A delivery as it reaches the domain-facing processor. */
 export interface IncomingBetEvent {
   /** `bet.settled`, `bet.rollback`, or something unexpected. */
   readonly routingKey: string;
   /** Unparsed body: validating it is the processor's first job. */
   readonly payload: unknown;
+  /** Size of the raw body, which is what the size limit is checked against. */
+  readonly sizeBytes: number;
 }
 
 export interface BetEventProcessorPort {

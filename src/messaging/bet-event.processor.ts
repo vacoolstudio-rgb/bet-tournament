@@ -4,6 +4,7 @@ import { parseMoney } from '../common/money.js';
 import { parseTimestamp } from '../common/time.js';
 import { SCORING_SERVICE } from '../scoring/scoring.contract.js';
 import type { ScoringPort } from '../scoring/scoring.contract.js';
+import { MAX_EVENT_BYTES } from './contracts/index.js';
 import type { AckReason, BetEventProcessorPort, IncomingBetEvent } from './contracts/index.js';
 import { BetRollbackEventDto, BetSettledEventDto } from './dto/index.js';
 import { ROUTING_KEY_ROLLBACK, ROUTING_KEY_SETTLED } from './topology.js';
@@ -22,7 +23,18 @@ import { validateEvent } from './validate-event.js';
 export class BetEventProcessor implements BetEventProcessorPort {
   constructor(@Inject(SCORING_SERVICE) private readonly scoring: ScoringPort) {}
 
-  async process({ routingKey, payload }: IncomingBetEvent): Promise<AckReason> {
+  async process({ routingKey, payload, sizeBytes }: IncomingBetEvent): Promise<AckReason> {
+    // Before anything walks the structure: an oversized body is a producer bug
+    // whichever shape it has, and refusing it by size costs the same no matter
+    // what is inside it.
+    if (sizeBytes > MAX_EVENT_BYTES) {
+      throw new PoisonMessageError(
+        'invalid_schema',
+        `Event body is ${sizeBytes} bytes, over the ${MAX_EVENT_BYTES} byte limit`,
+        { sizeBytes, limit: MAX_EVENT_BYTES },
+      );
+    }
+
     if (routingKey === ROUTING_KEY_SETTLED) {
       const event = validateEvent({ dto: BetSettledEventDto, payload });
 
