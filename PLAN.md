@@ -1,9 +1,7 @@
 # План реализации — «Турнир на ставках»
 
-Документ для аппрува. Всё, что помечено **❓**, — решения, которые я принял сам,
-но которые стоит подтвердить или поменять: они меняют код, а не только формулировки.
-После аппрува этот файл остаётся в репозитории как история, а спорные места
-переезжают в `DECISIONS.md`.
+Ревизия 2: после ревью плана на конфликты логики и соответствие ТЗ.
+Что изменилось относительно первой ревизии — в разделе 15.
 
 ---
 
@@ -12,11 +10,34 @@
 Подтверждено: очки = `winAmount` в USD, дробные хранятся точно (`NUMERIC(20,6)`),
 в API — и точное значение, и `floor`; турнирное окно по `settledAt` из конфига;
 RabbitMQ через `@golevelup/nestjs-rabbitmq`; TypeORM с явными SQL-миграциями;
-тесты на vitest + testcontainers. Остальные пункты — как описано ниже.
+тесты на vitest + testcontainers.
 
 ---
 
-## 1. Оценка задачи
+## 1. Соответствие ТЗ
+
+| Требование ТЗ | Где закрыто |
+|---|---|
+| Очки по событиям `bet.settled` из очереди | §7 топология, §8 обработчик |
+| 1 очко за 1 USD выигранной ставки | §3.1 (`winAmount`), §3.2 (точность и округление) |
+| Конвертация валют по курсу из конфига | §3.4, §11 (`FX_RATES`), курс фиксируется в строке ставки |
+| Отмена ставки событием `bet.rollback` | §3.5, §3.9, §8 |
+| Схема события `{betId, playerId, currency, stake, winAmount, settledAt}` | §8 DTO, §10; принимается как есть, без добавления обязательных полей |
+| Продюсер для проверки пишу сам | §10, 9 сценариев |
+| Эндпоинт лидерборда: топ-100 | §9 |
+| Позиция игрока из заголовка `X-Player-Id` | §9, §3.6 |
+| Репозиторий с кодом | этот репозиторий, приватный |
+| README | §13 |
+| AGENTS.md | §13, по стандарту с agents.md |
+| DECISIONS.md: вопросы, решения, обоснования | §13, материал — весь §3 |
+
+Отклонений от ТЗ нет. Добавлено сверх ТЗ: турнирное окно (§3.3), health/metrics,
+DLQ с классификацией ошибок, CI. Всё добавленное отмечено в DECISIONS как
+осознанное расширение, а не как требование.
+
+---
+
+## 2. Оценка задачи
 
 Задача маленькая по бизнес-логике и целиком про инфраструктурную аккуратность.
 Что реально проверяют (и на что я делаю упор):
@@ -37,25 +58,25 @@ RabbitMQ через `@golevelup/nestjs-rabbitmq`; TypeORM с явными SQL-м
 |---|---|
 | Каркас: NestJS, конфиг с валидацией, docker-compose, health | 2–3 ч |
 | Схема БД + миграции | 1.5 ч |
-| Топология RabbitMQ: exchange, queue, retry/DLQ, ack-политика | 3 ч |
-| Домен: начисление/откат, идемпотентность, конвертация валют | 3 ч |
+| Топология RabbitMQ: exchange, queue, retry с TTL, парковка, ack-политика | 4 ч |
+| Домен: начисление/откат, идемпотентность, конвертация валют | 3.5 ч |
 | API лидерборда + Swagger | 1.5 ч |
 | Продюсер-CLI со сценариями | 1 ч |
-| Тесты: unit + интеграционные на testcontainers | 4–5 ч |
+| Тесты: unit + интеграционные на testcontainers | 5 ч |
 | README / AGENTS.md / DECISIONS.md | 2 ч |
 | CI (lint + typecheck + tests) | 0.5 ч |
-| **Итого** | **≈ 18–20 ч** |
+| **Итого** | **≈ 21–22 ч** |
 
 Минимальный «работает и проверяемо» вариант (без интеграционных тестов и retry-очереди) — 5–6 ч.
 Предлагаю делать полный: задача именно на то, чтобы показать инженерную аккуратность.
 
 ---
 
-## 2. Открытые вопросы ТЗ и мои решения
+## 3. Открытые вопросы ТЗ и мои решения
 
 Это ядро будущего `DECISIONS.md`.
 
-### 2.1 ✅ Что такое «1 очко за каждый 1 USD выигранной ставки»
+### 3.1 ✅ Что такое «1 очко за каждый 1 USD выигранной ставки»
 
 Формулировка допускает три чтения: `winAmount`, `winAmount − stake` (чистая прибыль),
 или `stake` выигравшей ставки.
@@ -65,7 +86,10 @@ RabbitMQ через `@golevelup/nestjs-rabbitmq`; TypeORM с явными SQL-м
 Поле `stake` при этом сохраняю в БД — оно нужно для аудита и для возможной смены формулы,
 но в очки не входит.
 
-### 2.2 ✅ Дробные очки и округление
+Проигрышная ставка (`winAmount = 0`) — нормальное событие: строка в БД пишется (нужна
+для идемпотентности и для последующего `rollback`), очков даёт ноль.
+
+### 3.2 ✅ Дробные очки и округление
 
 Выигрыш 10.40 EUR при курсе 1.08 — это 11.232 USD. Варианты: `floor` на каждом событии
 (теряем дробь, десять выигрышей по 0.6 USD дадут 0 очков) или хранить точное значение.
@@ -77,41 +101,53 @@ RabbitMQ через `@golevelup/nestjs-rabbitmq`; TypeORM с явными SQL-м
 вычитает именно это сохранённое число, а не пересчитывает формулу заново** — курс в
 конфиге может измениться между `settled` и `rollback`.
 
-### 2.3 ✅ Турнирное окно
+Следствие для API: сортировка идёт по точным очкам, а клиент видит округлённые.
+Два игрока могут показывать одинаковые `points` и стоять на разных местах — это
+документируется строкой в README, поле `pointsExact` объясняет порядок.
+
+### 3.3 ✅ Турнирное окно
 
 В схеме события есть `settledAt`, но ТЗ нигде его не использует. Для «турнира» это
 естественно читается как «в зачёт идут только ставки, рассчитанные внутри окна турнира».
 
-**Решение: один активный турнир, окно (`starts_at`/`ends_at`) из конфига; события вне
-окна подтверждаются (ack) и не начисляют очки, с отдельной метрикой и логом.** Таблица
-`tournaments` с `tournament_id` во всех ключах — чтобы схема не переписывалась под
-второй турнир. Если считаете это overengineering для ТЗ — скажите, оставлю один
-дефолтный турнир с окном «всегда».
+**Решение: один активный турнир, окно (`starts_at`/`ends_at`) из конфига; события
+`bet.settled` вне окна подтверждаются (ack) и не начисляют очки, с отдельной метрикой
+и логом.** Границы: `starts_at` включительно, `ends_at` исключительно — закрыто тестом.
 
-### 2.4 Неизвестная валюта
+**Источник правды — конфиг.** На старте приложение делает upsert строки турнира по
+`code`; таблица `tournaments` нужна для ссылочной целостности и для будущего второго
+турнира, но не является независимым источником. Смена окна в конфиге **не**
+пересчитывает уже начисленные очки — это заявлено в README, а не «так получилось».
 
-**Решение: это не ретраябл.** Курса в конфиге нет → очки посчитать нельзя, повторные
-попытки ничего не изменят до деплоя нового конфига. Такое событие уходит в DLQ с
-причиной в заголовках, метрика `unknown_currency`. Молча начислить 0 очков — худший
-вариант: потеря денег игрока без следа. `USD = 1` зашит и не берётся из конфига.
+**Окно не применяется к `bet.rollback`** — см. 3.9.
 
-### 2.5 Порядок событий
+### 3.4 ✅ Неизвестная валюта
+
+**Решение: для `bet.settled` это не ретраябл.** Курса в конфиге нет → очки посчитать
+нельзя, повторные попытки ничего не изменят до деплоя нового конфига. Такое событие
+паркуется с причиной в заголовках, метрика `unknown_currency`. Молча начислить
+0 очков — худший вариант: потеря денег игрока без следа. `USD = 1` зашит и не берётся
+из конфига.
+
+**К `bet.rollback` правило не применяется** — см. 3.9.
+
+### 3.5 ✅ Порядок событий
 
 Четыре ситуации, которые обязаны работать:
 
-1. **Дубль `settled`** — очки начисляются один раз (`betId` — PK, `INSERT … ON CONFLICT DO NOTHING`, очки прибавляются только если вставка реально произошла).
-2. **`rollback` после `settled`** — вычитаем `points_awarded`, помечаем ставку `rolled_back`.
-3. **`rollback` раньше `settled`** — пишем «надгробие»: строку ставки со статусом `rolled_back` и `points_awarded = 0`. Пришедший позже `settled` увидит существующую строку, ничего не начислит.
-4. **Дубль `rollback`** — вычитание ровно один раз (переход статуса `settled → rolled_back` делается условным `UPDATE … WHERE status = 'settled'`, по числу затронутых строк решаем, трогать ли очки).
+1. **Дубль `settled`** — очки начисляются один раз (`betId` — часть PK, `INSERT … ON CONFLICT DO NOTHING`, очки прибавляются только если вставка реально произошла).
+2. **`rollback` после `settled`** — вычитаем `points_awarded`, статус → `rolled_back`.
+3. **`rollback` раньше `settled`** — пишем «надгробие»: строка со статусом `rollback_pending` и `points_awarded = 0`. Пришедший позже `settled` дозаполнит в ней аудит (суммы, курс, `settled_at`), переведёт статус в `rolled_back` и **не начислит очков**.
+4. **Дубль `rollback`** — вычитание ровно один раз: переход статуса делается условным `UPDATE … WHERE status = 'settled'`, и по числу затронутых строк решается, трогать ли агрегат.
 
-### 2.6 ❓ `X-Player-Id` и отсутствие авторизации
+### 3.6 ✅ `X-Player-Id` и отсутствие авторизации
 
 **Решение: заголовок опционален и валидируется как UUID.** Нет заголовка → в ответе
 `me: null`, топ-100 отдаётся. Невалидный UUID → 400. В README и DECISIONS отдельно
 отмечу, что в проде это поле приходит из JWT/сессии, а не из заголовка, который может
 подставить кто угодно.
 
-### 2.7 ❓ Позиция при равных очках
+### 3.7 ✅ Позиция при равных очках
 
 ТЗ не определяет. «Два игрока с 50 очками» — у них одна позиция или разные?
 
@@ -120,34 +156,55 @@ player_id ASC`.** Кто набрал раньше, тот выше; позиц�
 «позиция игрока» согласованы между собой. Dense-rank (общая позиция на равных очках)
 даёт расхождение между «номером строки в топе» и «позицией», поэтому не беру.
 
+`last_scored_at` — это «когда игрок последний раз **получил очки**»:
+
+- обновляется только когда `points_awarded > 0`; иначе проигрышная ставка меняла бы позицию игрока, не меняя его очков;
+- при откате пересчитывается по оставшимся зачётным ставкам игрока (индексированный `max(settled_at)`), иначе ключ сортировки остался бы от списанной ставки. Если зачётных ставок не осталось, значение сохраняется как есть: очки при этом 0, игрок внизу таблицы, тай-брейк не наблюдаем.
+
 Игрок без очков (нет в таблице) → `{ points: 0, rank: null }`, а не фиктивное
 последнее место: число участников турнира сервис не знает.
 
-### 2.8 Представление денег
+### 3.8 ✅ Представление денег
 
 ТЗ не говорит, `stake`/`winAmount` — это мажорные единицы (`12.34`) или минорные (`1234`).
 
 **Решение: мажорные единицы, принимаю `string | number`, валидирую как десятичное
-неотрицательное с ≤ 4 знаками, внутри считаю `decimal.js`, храню `NUMERIC(20,4)`.**
-Float в арифметике денег не появляется нигде. Допущение фиксируется в README и в
-JSON-схеме контракта.
+неотрицательное, ≤ 4 знаков после точки и ≤ 10^14, внутри считаю `decimal.js`, храню
+`NUMERIC(20,4)`.** Верхняя граница и число знаков — часть валидации, а не надежда на
+БД: иначе переполнение `numeric(20,4)` вылезет как ошибка драйвера и уйдёт в
+повторы вместо парковки. Float в арифметике денег не появляется нигде.
+Допущение фиксируется в README и в JSON-схеме контракта.
+
+### 3.9 ✅ `bet.rollback` не трогает ни курсы, ни окно
+
+Найдено на ревью плана: применение к `bet.rollback` тех же правил, что к `bet.settled`,
+теряет деньги игроков двумя способами.
+
+- Если фильтровать `rollback` по окну турнира, откат ставки с `settledAt` вне окна будет проигнорирован, а начисленные очки останутся. **Фантомные очки.**
+- Если резолвить курс валюты на `rollback`, легитимный откат события в валюте, выпавшей из конфига, уйдёт в парковку — и очки опять останутся.
+
+**Решение: `bet.rollback` адресуется исключительно по `betId`.** Из его полезной
+нагрузки обязателен только `betId` (и `playerId` — для логов); `currency`, `stake`,
+`winAmount`, `settledAt` принимаются, но в вычислениях не участвуют. Сколько вычесть —
+известно из строки ставки, в какой турнир — тоже. Конвертация и проверка окна
+выполняются только на пути `bet.settled`.
 
 ---
 
-## 3. Стек
+## 4. Стек
 
 | Решение | Выбор | Почему |
 |---|---|---|
 | Рантайм | Node 22 LTS, TypeScript 5.x, strict | |
 | Фреймворк | NestJS 11 | по ТЗ |
-| ✅ RabbitMQ | `@golevelup/nestjs-rabbitmq` | нужен topic-exchange, DLX, ручной ack, prefetch. `@nestjs/microservices` RMQ-транспорт заточен под RPC/один queue и топологию с DLX описывает плохо. Альтернативы: `amqplib` + `amqp-connection-manager` руками (больше кода, полный контроль) |
-| ✅ БД-слой | TypeORM 0.3 + явные SQL-миграции, `synchronize: false` | как в payhub, миграции читаемые и ревьюятся. Альтернатива — Prisma (быстрее стартовать, но горячий путь — upsert с инкрементом, который я всё равно пишу сырым SQL) |
+| ✅ RabbitMQ | `@golevelup/nestjs-rabbitmq` | нужен topic-exchange, DLX, ручной ack, prefetch. `@nestjs/microservices` RMQ-транспорт заточен под RPC/одну очередь и топологию с DLX описывает плохо. Альтернатива: `amqplib` + `amqp-connection-manager` руками (больше кода, полный контроль) |
+| ✅ БД-слой | TypeORM 0.3 + явные SQL-миграции, `synchronize: false` | как в payhub, миграции читаемые и ревьюятся. Горячий путь (upsert с инкрементом) пишется сырым SQL |
 | Валидация конфига | zod, падать на старте | |
 | Валидация событий | class-validator DTO на входе консьюмера | |
 | Деньги | `decimal.js` | |
 | Логи | `nestjs-pino`, structured, `betId`/`playerId`/`eventType` в контексте | |
 | Метрики / health | `@nestjs/terminus` (`/health`: db + rabbit), `prom-client` (`/metrics`) | |
-| ✅ Тесты | vitest + `testcontainers` (postgres + rabbitmq) | как в payhub. Альтернатива — jest + docker-compose в CI |
+| ✅ Тесты | vitest + `testcontainers` (postgres + rabbitmq) | как в payhub |
 | Docs API | Swagger на `/api/docs` | |
 | CI | GitHub Actions: lint, typecheck, unit, integration | |
 
@@ -156,7 +213,7 @@ Redis/ZSET для лидерборда **не беру**: при одном ин
 
 ---
 
-## 4. Структура
+## 5. Структура
 
 ```
 src/
@@ -168,8 +225,9 @@ src/
     migrations/
     entities/                  Tournament, Bet, PlayerScore
   messaging/
-    rabbit.module.ts           топология: exchange, queue, DLX, prefetch
-    bet-events.consumer.ts     ack/nack-политика, классификация ошибок
+    rabbit.module.ts           топология: exchange, queue, retry, parking, prefetch
+    bet-events.consumer.ts     ack-политика, классификация ошибок
+    parking.publisher.ts       явная парковка отравленных сообщений
     dto/                       BetSettledEvent, BetRollbackEvent
   scoring/
     scoring.service.ts         начислить / откатить (транзакция)
@@ -185,21 +243,23 @@ test/
   unit/
   integration/                 testcontainers: postgres + rabbitmq
 docker-compose.yml
-README.md  AGENTS.md  DECISIONS.md  PLAN.md
+README.md  AGENTS.md  CLAUDE.md→AGENTS.md  DECISIONS.md  PLAN.md
 ```
 
 ---
 
-## 5. Схема БД
+## 6. Схема БД
 
 ```sql
--- турниры: окно, в которое должна попасть ставка по settledAt
+-- турниры: окно, в которое должна попасть ставка по settledAt.
+-- Источник правды — конфиг; строка создаётся upsert'ом на старте по code.
 tournaments (
   id           uuid        primary key,
   code         text        not null unique,
   starts_at    timestamptz not null,
   ends_at      timestamptz not null,
-  created_at   timestamptz not null default now()
+  created_at   timestamptz not null default now(),
+  check (ends_at > starts_at)
 )
 
 -- журнал ставок: он же журнал идемпотентности
@@ -207,18 +267,25 @@ bets (
   tournament_id  uuid        not null references tournaments(id),
   bet_id         uuid        not null,
   player_id      uuid        not null,
-  currency       char(3)     not null,
-  stake          numeric(20,4) not null,
-  win_amount     numeric(20,4) not null,
-  fx_rate        numeric(20,8) not null,   -- курс, по которому считали
-  points_awarded numeric(20,6) not null,   -- фактически начисленное (0 для надгробия)
-  status         text        not null,     -- 'settled' | 'rolled_back'
-  settled_at     timestamptz null,         -- null у надгробия от раннего rollback
+  status         text        not null,       -- 'settled' | 'rolled_back' | 'rollback_pending'
+  currency       char(3)       null,         -- null только у надгробия
+  stake          numeric(20,4) null,
+  win_amount     numeric(20,4) null,
+  fx_rate        numeric(20,8) null,         -- курс, по которому считали
+  points_awarded numeric(20,6) not null default 0,   -- фактически начисленное
+  settled_at     timestamptz   null,
   created_at     timestamptz not null default now(),
   updated_at     timestamptz not null default now(),
-  primary key (tournament_id, bet_id)
+  primary key (tournament_id, bet_id),
+  -- надгробие (rollback пришёл первым) не знает сумм; все прочие статусы знают
+  check (status <> 'rollback_pending' OR points_awarded = 0),
+  check (status =  'rollback_pending' OR (
+    currency is not null and stake is not null and win_amount is not null
+    and fx_rate is not null and settled_at is not null))
 )
-create index on bets (tournament_id, player_id);
+-- под пересчёт last_scored_at при откате
+create index on bets (tournament_id, player_id, settled_at desc)
+  where status = 'settled' and points_awarded > 0;
 
 -- агрегат для лидерборда
 player_scores (
@@ -226,107 +293,160 @@ player_scores (
   player_id      uuid        not null,
   points         numeric(20,6) not null default 0,
   bets_counted   integer     not null default 0,
-  last_scored_at timestamptz not null,
+  last_scored_at timestamptz not null,       -- когда последний раз получил очки
   updated_at     timestamptz not null default now(),
-  primary key (tournament_id, player_id)
+  primary key (tournament_id, player_id),
+  check (points >= 0),
+  check (bets_counted >= 0)
 )
 -- покрывающий индекс под точный порядок лидерборда
 create index on player_scores (tournament_id, points desc, last_scored_at asc, player_id asc);
 ```
 
-`points` в агрегате никогда не уходит в минус: откат возможен только для ставки,
-которая была в статусе `settled`, то есть её очки заведомо в сумме. Инвариант
-закрываю `check (points >= 0)` и покрываю тестом.
+Инварианты `points >= 0` и `bets_counted >= 0` держатся не на вере: вычитание
+возможно только при переходе `settled → rolled_back`, то есть ровно один раз и ровно
+на ту сумму, которая до этого была прибавлена. CHECK стоит страховкой от будущей
+ошибки и покрыт тестом.
 
 ---
 
-## 6. Топология RabbitMQ
+## 7. Топология RabbitMQ
 
 ```
-            publish bet.settled / bet.rollback
+         publish bet.settled / bet.rollback
                         │
-              ┌─────────▼─────────┐
-              │ exchange: bets    │  topic, durable
-              └─────────┬─────────┘
-                        │ binding: bet.settled, bet.rollback
-              ┌─────────▼──────────────────────┐
-              │ queue: tournament.bets         │  quorum, durable
-              │   x-delivery-limit: 5          │  авто-парковка после 5 доставок
-              │   x-dead-letter-exchange: bets.dlx │
-              └─────────┬──────────────────────┘
-                        │ исчерпан лимит / nack(requeue=false)
-              ┌─────────▼─────────┐     ┌──────────────────────┐
-              │ exchange bets.dlx │────▶│ queue tournament.dlq │
-              └───────────────────┘     └──────────────────────┘
+              ┌─────────▼──────────┐
+              │ exchange: bets     │  topic, durable
+              └─────────┬──────────┘
+                        │ bindings: bet.settled, bet.rollback
+              ┌─────────▼────────────────────────────┐
+              │ queue: tournament.bets               │  quorum, durable
+              │   prefetch 20                        │
+              │   x-dead-letter-exchange: bets.retry │
+              │   x-delivery-limit: 20   (страховка) │
+              └───┬──────────────────────────────┬───┘
+     ретраябл-     │                             │  отравленное сообщение:
+     ошибка:       │                             │  публикуем явно + ack
+     nack(false)   │                             ▼
+              ┌────▼───────────────┐   ┌─────────────────────────┐
+              │ exchange bets.retry│   │ queue tournament.parked │
+              └────┬───────────────┘   └─────────────────────────┘
+              ┌────▼─────────────────────┐        ▲
+              │ queue tournament.retry   │        │ x-death count ≥ 5
+              │   classic, x-message-ttl │        │ (решает консьюмер)
+              │   = 10s                  ├────────┘
+              │   DLX → bets (исходный   │
+              │   routing key)           │
+              └──────────────────────────┘
 ```
 
-Почему quorum-queue с `x-delivery-limit`, а не отдельная retry-очередь с TTL: лимит
-доставок и парковка в DLQ получаются брокером из коробки, без ручного цикла
-«TTL-очередь → обратно в exchange» и без риска бесконечной петли. Экспоненциальный
-backoff так не сделать — если он нужен, добавляю `tournament.bets.retry` с
-`x-message-ttl` отдельным шагом (решение в DECISIONS).
+Два разных исхода разведены намеренно, это главный смысл схемы:
+
+- **Ретраябл-ошибка** (БД недоступна, таймаут, deadlock) → `nack(requeue=false)` → сообщение уходит в `bets.retry` → лежит 10 с в retry-очереди → возвращается в `bets` с исходным routing key. Счётчик попыток читается из заголовка `x-death`; на 5-й попытке консьюмер паркует сообщение в `tournament.parked` и подтверждает его.
+- **Отравленное сообщение** (битая схема, неизвестная валюта, суммы вне границ) → консьюмер сам публикует его в `tournament.parked` с причиной в заголовках и делает `ack`. Никаких попыток.
+
+Почему не `nack(requeue=true)` плюс `x-delivery-limit: 5`, как было в первой ревизии:
+переотправка происходит мгновенно, и двухсекундная недоступность Postgres сожгла бы
+все 5 попыток за миллисекунды — события осели бы в DLQ вместо того, чтобы
+обработаться через секунду. TTL-очередь даёт паузу между попытками;
+`x-delivery-limit: 20` остаётся только страховкой от бесконечной петли при ошибке в
+самом консьюмере.
+
+Retry-очередь — classic, а не quorum: `x-message-ttl` у classic-очередей поддержан
+без оговорок по версиям брокера. Единая TTL вместо экспоненциального backoff — на
+один retry-хоп, сознательный компромисс (в DECISIONS: цепочка TTL-очередей-ступеней
+10s/1m/5m, если понадобится).
 
 **Классификация ошибок — то, ради чего всё это:**
 
 | Ситуация | Действие |
 |---|---|
-| Невалидная схема события, отрицательные суммы | `nack(requeue=false)` → DLQ сразу. Повтор не поможет |
-| Неизвестная валюта | `nack(requeue=false)` → DLQ, метрика |
-| `settledAt` вне окна турнира | `ack`, очки не начисляются, метрика. Это не ошибка |
+| Невалидная схема, отрицательные суммы, > 4 знаков, переполнение | парковка + `ack`. Повтор не поможет |
+| Неизвестная валюта в `bet.settled` | парковка + `ack`, метрика `unknown_currency` |
+| `settledAt` вне окна турнира (только `bet.settled`) | `ack`, очки не начисляются, метрика. Это не ошибка |
 | Дубль / уже откатанная ставка | `ack`. Нормальный путь at-least-once |
-| БД недоступна, таймаут, deadlock | `nack(requeue=true)` → переотправка, после 5 попыток DLQ |
+| `bet.rollback` для неизвестной ставки | `ack` + надгробие. Не ошибка, а гонка порядка |
+| БД недоступна, таймаут, deadlock | retry-хоп, после 5 попыток парковка |
+| Неизвестный routing key | парковка + `ack` |
 
-Prefetch 20. Конкурентные события одного игрока безопасны: агрегат обновляется
-атомарным `INSERT … ON CONFLICT DO UPDATE SET points = player_scores.points + excluded.points`,
-без «прочитал → посчитал в коде → записал». Блокировки берутся в одном порядке
-(строка `bets`, затем `player_scores`), что исключает взаимную блокировку.
+Конкурентные события одного игрока безопасны: агрегат обновляется атомарным
+`INSERT … ON CONFLICT DO UPDATE SET points = player_scores.points + excluded.points`,
+без «прочитал → посчитал в коде → записал». Блокировки берутся в одном порядке —
+сначала строка `bets`, затем `player_scores` — и это соблюдается в обоих
+обработчиках, поэтому взаимная блокировка невозможна (конкуренция за строку игрока
+остаётся, но это ожидание, а не deadlock).
 
 `ack` — только после коммита транзакции. Падение между коммитом и ack даёт
 переотправку, которую съедает идемпотентность.
 
 ---
 
-## 7. Обработка событий
+## 8. Обработка событий
 
 **`bet.settled`:**
 
 ```
+points := winAmount × fx_rate(currency)         -- decimal.js, до транзакции
+если settledAt вне окна турнира → ack, метрика, выход
 BEGIN
-  points := winAmount * fx_rate(currency)        -- decimal.js, считается до транзакции
-  INSERT INTO bets (…, points_awarded = points, status = 'settled')
-    ON CONFLICT (tournament_id, bet_id) DO NOTHING
-  если вставки не было → COMMIT, ack (дубль или ставка уже откатана)
-  INSERT INTO player_scores (…, points, bets_counted = 1, last_scored_at = settledAt)
+  INSERT INTO bets (…, status='settled', points_awarded=points)
+    ON CONFLICT (tournament_id, bet_id) DO UPDATE
+      SET currency=…, stake=…, win_amount=…, fx_rate=…, settled_at=…,
+          status='rolled_back', updated_at=now()
+      WHERE bets.status = 'rollback_pending'          -- дозаполняем надгробие
+    RETURNING (xmax = 0) AS inserted
+  если не inserted → COMMIT, ack
+      (дубль, либо ставка уже откатана — очки не начисляем ни в одном случае)
+  INSERT INTO player_scores (…, points, bets_counted=1, last_scored_at=settledAt)
     ON CONFLICT (tournament_id, player_id) DO UPDATE
-      SET points = player_scores.points + excluded.points,
-          bets_counted = player_scores.bets_counted + 1,
-          last_scored_at = greatest(player_scores.last_scored_at, excluded.last_scored_at)
+      SET points        = player_scores.points + excluded.points,
+          bets_counted  = player_scores.bets_counted + 1,
+          last_scored_at = CASE WHEN excluded.points > 0
+                                THEN greatest(player_scores.last_scored_at,
+                                              excluded.last_scored_at)
+                                ELSE player_scores.last_scored_at END,
+          updated_at = now()
 COMMIT → ack
 ```
 
-**`bet.rollback`** (в событии, по ТЗ, тот же `betId`):
+Проигрышная ставка (`points = 0`) увеличивает `bets_counted`, но не сдвигает
+`last_scored_at` — иначе она меняла бы позицию игрока, не меняя его очков.
+
+**`bet.rollback`** (адресуется только по `betId`, без курсов и без проверки окна):
 
 ```
 BEGIN
-  UPDATE bets SET status = 'rolled_back', updated_at = now()
-    WHERE tournament_id = :t AND bet_id = :b AND status = 'settled'
+  UPDATE bets SET status='rolled_back', updated_at=now()
+    WHERE tournament_id=:t AND bet_id=:b AND status='settled'
     RETURNING player_id, points_awarded
-  если 0 строк:
-     ставки нет вообще → INSERT надгробия (status='rolled_back', points_awarded=0)
-     ставка уже rolled_back → ничего
-  иначе:
-     UPDATE player_scores SET points = points - :points_awarded,
-                              bets_counted = bets_counted - 1
-       WHERE tournament_id = :t AND player_id = :p
+  0 строк:
+     ставки нет вообще → INSERT надгробия (status='rollback_pending', points_awarded=0)
+                         ON CONFLICT DO NOTHING      -- гонка двух rollback'ов
+     уже rolled_back / rollback_pending → ничего (дубль)
+  иначе, если points_awarded > 0:
+     UPDATE player_scores SET
+       points        = points - :points_awarded,
+       bets_counted  = bets_counted - 1,
+       last_scored_at = COALESCE(
+         (SELECT max(settled_at) FROM bets
+           WHERE tournament_id=:t AND player_id=:p
+             AND status='settled' AND points_awarded > 0),
+         last_scored_at),
+       updated_at = now()
+     WHERE tournament_id=:t AND player_id=:p
+  иначе (откат проигрышной ставки):
+     UPDATE player_scores SET bets_counted = bets_counted - 1 …
 COMMIT → ack
 ```
 
-Ключевой момент — вычитается `points_awarded` из строки, а не пересчёт по текущему
-курсу. Курс в конфиге мог измениться.
+Два ключевых момента: вычитается `points_awarded` из строки, а не пересчёт по текущему
+курсу (курс в конфиге мог измениться), и `last_scored_at` пересчитывается по
+оставшимся зачётным ставкам — иначе ключ сортировки остался бы от списанной ставки.
+Подзапрос идёт по частичному индексу из §6.
 
 ---
 
-## 8. API
+## 9. API
 
 ```http
 GET /leaderboard?limit=100
@@ -359,7 +479,7 @@ X-Player-Id: 4f2e… (опционально)
 
 ---
 
-## 9. Продюсер (для проверки)
+## 10. Продюсер (для проверки)
 
 `npm run produce -- --scenario=<name> [--count=N]`, публикует в exchange `bets`:
 
@@ -370,20 +490,22 @@ X-Player-Id: 4f2e… (опционально)
 | `rollback` | settled → rollback → очки вернулись к исходным |
 | `rollback-first` | rollback раньше settled → очки не начислились |
 | `rollback-twice` | двойной rollback → вычет один раз |
-| `unknown-currency` | → DLQ, очки не изменились |
-| `out-of-window` | `settledAt` вне турнира → ack, 0 очков |
-| `malformed` | битая схема → DLQ |
+| `unknown-currency` | settled с неизвестной валютой → парковка; rollback с неизвестной валютой → **отрабатывает нормально** |
+| `out-of-window` | settled вне окна → ack, 0 очков; rollback такой ставки → работает |
+| `malformed` | битая схема → парковка |
 | `load --count=50000` | прогон под нагрузкой, замер времени лидерборда |
 
 ---
 
-## 10. Конфиг
+## 11. Конфиг
 
 ```
 NODE_ENV, PORT, LOG_LEVEL
 DATABASE_URL
 RABBITMQ_URL
 RABBITMQ_PREFETCH=20
+RABBITMQ_MAX_ATTEMPTS=5
+RABBITMQ_RETRY_TTL_MS=10000
 FX_RATES={"EUR":1.08,"GBP":1.27,"UAH":0.024}     # JSON; USD=1 зашит
 TOURNAMENT_CODE=nov-2026
 TOURNAMENT_STARTS_AT / TOURNAMENT_ENDS_AT        # ISO-8601
@@ -395,57 +517,98 @@ TOURNAMENT_STARTS_AT / TOURNAMENT_ENDS_AT        # ISO-8601
 
 ---
 
-## 11. Тесты
+## 12. Тесты
 
 **Unit** (без инфраструктуры): конвертация валют и точность decimal; неизвестная валюта →
-типизированная ошибка; попадание в окно турнира (границы включительно/исключительно);
-классификация ошибок консьюмера; формирование ранга и тай-брейков.
+типизированная ошибка; границы окна турнира (`starts_at` включительно, `ends_at`
+исключительно); классификация ошибок консьюмера; валидация границ сумм; формирование
+ранга и тай-брейков.
 
 **Интеграционные** (testcontainers: postgres + rabbitmq, настоящая публикация в exchange):
 
 1. happy path: 3 события в 3 валютах → ожидаемые очки и порядок в топе;
 2. дубль `settled` → очки один раз;
 3. `settled` + `rollback` → исходное состояние, `bets_counted` вернулся;
-4. `rollback` раньше `settled` → 0 очков, надгробие в БД;
+4. `rollback` раньше `settled` → 0 очков, надгробие `rollback_pending` в БД, поздний `settled` дозаполнил суммы и не начислил очков;
 5. двойной `rollback` → один вычет;
-6. неизвестная валюта → сообщение в DLQ, очки не изменились;
-7. битая схема → DLQ без ретраев;
-8. событие вне окна → ack, 0 очков;
-9. `GET /leaderboard`: топ отсортирован, `rank` непрерывен, `me` совпадает с позицией в топе;
-10. игрок без очков → `me.rank = null, points = 0`;
-11. 200 конкурентных событий одного игрока при prefetch 20 → сумма точная (отсутствие гонок).
+6. неизвестная валюта в `settled` → сообщение в `tournament.parked`, очки не изменились;
+7. **`rollback` с валютой, которой нет в конфиге, и с `settledAt` вне окна → очки списаны** (регрессия на 3.9);
+8. битая схема → парковка без retry-хопов;
+9. `settled` вне окна → ack, 0 очков;
+10. проигрышная ставка (`winAmount = 0`) не сдвигает `last_scored_at` и не меняет позицию при равных очках;
+11. после отката `last_scored_at` равен `max(settled_at)` оставшихся зачётных ставок;
+12. ретраябл-ошибка: Postgres остановлен на 15 с → события прошли retry-хоп и доехали, в парковке пусто;
+13. `GET /leaderboard`: топ отсортирован, `rank` непрерывен, `me` совпадает с позицией в топе;
+14. игрок без очков → `me.rank = null, points = 0`;
+15. гонка: **два консьюмера** (два экземпляра приложения на одной очереди), 200 событий одного игрока → сумма точная.
+
+Тест 15 именно с двумя консьюмерами: при одной подписке golevelup обрабатывает
+сообщения последовательно, и «тест на гонку» в один инстанс не проверял бы ничего.
 
 **Что не покрываю:** падение брокера посередине, чистый перф-бенчмарк — для ТЗ это шум.
 
 ---
 
-## 12. Документация
+## 13. Документация
 
-- **README** — что это, быстрый старт (`docker compose up` → продюсер → `curl`), env, контракт событий, схема топологии, API, как гонять тесты.
-- **AGENTS.md** — для агентов и для меня-через-месяц: команды, структура, инварианты, которые нельзя ломать (деньги не float; очки списываются из `points_awarded`, а не пересчётом; `synchronize` выключен, схема только миграциями; ack только после коммита; новое событие → новый интеграционный тест), политика тестов и коммитов.
-- **DECISIONS.md** — всё из раздела 2 в формате «вопрос → варианты → решение → почему → что бы изменило решение», плюс отвергнутые: Redis ZSET, retry-очередь с backoff, `@nestjs/microservices`, dense-rank, таблица `processed_events` вместо `bets` как журнала идемпотентности.
+- **README** — человеку: что это, быстрый старт (`docker compose up` → продюсер → `curl`), env, контракт событий, схема топологии, API, допущения (мажорные единицы, `X-Player-Id` вместо авторизации, окно турнира не пересчитывается задним числом), как гонять тесты.
+
+- **AGENTS.md** — агенту, по стандарту [agents.md](https://agents.md/): обычный markdown в корне репозитория, обязательных полей у формата нет, правило «ближайший к файлу AGENTS.md выигрывает, явная просьба пользователя важнее файла». Репозиторий одномодульный, поэтому один файл в корне, без вложенных. Разделы по их примеру плюс один свой:
+  - `## Setup commands` — compose, миграции, продюсер;
+  - `## Code style` — strict TS, no float money, никаких `any` в домене;
+  - `## Testing instructions` — vitest, testcontainers, нужен докер, как гонять подмножество;
+  - `## PR instructions` — формат коммитов, `npm run verify` перед пушем;
+  - `## Инварианты, которые нельзя ломать` — деньги не float; откат вычитает `points_awarded`, а не пересчитывает по курсу; `bet.rollback` не резолвит курс и не проверяет окно; `last_scored_at` двигается только при `points_awarded > 0`; `synchronize` выключен, схема только миграциями; ack только после коммита; новый тип события → новый интеграционный тест.
+
+  README остаётся человеческим, AGENTS.md — операционным; дублирования не держу, из README одна ссылка. `CLAUDE.md` — симлинк на `AGENTS.md`, чтобы Claude Code читал тот же файл, а не вторую копию правил.
+
+- **DECISIONS.md** — всё из §3 в формате «вопрос → варианты → решение → почему → что изменило бы решение», плюс отвергнутые варианты: Redis ZSET, экспоненциальный backoff на цепочке TTL-очередей, `nack(requeue=true)` как механизм повторов, in-process retry вместо retry-очереди, `@nestjs/microservices`, dense-rank, таблица `processed_events` вместо `bets` как журнала идемпотентности. И отдельный раздел «что нашло ревью плана» — §15, как честная история проектирования.
 
 ---
 
-## 13. Порядок коммитов
+## 14. Порядок коммитов
 
 | # | Коммит | Выход |
 |---|---|---|
 | 1 | `chore: scaffold` | NestJS 11, strict TS, eslint/prettier, zod-конфиг, docker-compose, `/health` |
-| 2 | `feat(db): schema and migrations` | 3 таблицы, индексы, сидирование турнира |
-| 3 | `feat(mq): topology and consumer` | exchange/queue/DLX, DTO-валидация, ack-политика, пустой обработчик |
-| 4 | `feat(scoring): settle and rollback` | начисление, откат, идемпотентность, конвертация |
+| 2 | `feat(db): schema and migrations` | 3 таблицы, индексы, CHECK-инварианты, upsert турнира на старте |
+| 3 | `feat(mq): topology and consumer` | exchange/queue/retry/parking, DTO-валидация, классификация ошибок, пустой обработчик |
+| 4 | `feat(scoring): settle and rollback` | начисление, откат, идемпотентность, конвертация, пересчёт `last_scored_at` |
 | 5 | `feat(api): leaderboard` | `GET /leaderboard`, Swagger |
 | 6 | `feat(tools): event producer` | CLI со сценариями |
-| 7 | `test: unit and integration` | тесты из раздела 11 |
-| 8 | `docs: readme, agents, decisions` | три файла |
+| 7 | `test: unit and integration` | тесты из §12 |
+| 8 | `docs: readme, agents, decisions` | три файла + симлинк `CLAUDE.md` |
 | 9 | `ci: github actions` | lint + typecheck + тесты на PR |
 
 Этапы 1–6 показываю на аппрув по готовности, чтобы не уехать не туда на тестах и доках.
 
 ---
 
-## 14. Вне объёма (осознанно)
+## 15. Что нашло ревью плана
+
+Проверял две вещи: нет ли внутренних противоречий и всё ли из ТЗ закрыто. ТЗ закрыто
+полностью (§1). Противоречий нашлось восемь, два из них теряли деньги игроков.
+
+| # | Конфликт | Было | Стало |
+|---|---|---|---|
+| 1 | Окно турнира применялось ко всем событиям | откат ставки с `settledAt` вне окна игнорировался → **фантомные очки навсегда** | окно проверяется только на `bet.settled` (§3.9) |
+| 2 | Курс валюты резолвился на любом событии | откат в валюте, выпавшей из конфига, уезжал в DLQ → **очки оставались** | `bet.rollback` адресуется только по `betId` (§3.9) |
+| 3 | `last_scored_at` обновлялся на любом `settled` | проигрышная ставка сдвигала позицию игрока, не меняя очков | обновление только при `points_awarded > 0` (§3.7) |
+| 4 | `last_scored_at` не пересчитывался при откате | ключ сортировки оставался от списанной ставки | пересчёт по `max(settled_at)` зачётных ставок, частичный индекс (§3.7, §8) |
+| 5 | `nack(requeue=true)` + `x-delivery-limit: 5` как механизм повторов | мгновенные переотправки: 2 с недоступности Postgres = события в DLQ | retry-очередь с TTL 10 с, парковка явной публикацией, `x-delivery-limit` — только страховка (§7) |
+| 6 | `currency/stake/win_amount/fx_rate` были `NOT NULL` | надгробие от раннего `rollback` этих данных не знает — вставка упала бы | колонки nullable + CHECK по статусу, статус `rollback_pending`, поздний `settled` дозаполняет аудит (§6, §8) |
+| 7 | Окно турнира и в конфиге, и в таблице | два источника правды | конфиг — источник, строка создаётся upsert'ом на старте (§3.3) |
+| 8 | Тест «200 конкурентных событий при prefetch 20» | одна подписка golevelup обрабатывает последовательно — тест ничего не проверял | два экземпляра приложения на одной очереди (§12, тест 15) |
+
+Дополнительно: валидация сумм получила верхнюю границу и лимит знаков (§3.8) — иначе
+переполнение `numeric(20,4)` приходило бы как ошибка драйвера и уходило в повторы
+вместо парковки; добавлены CHECK `points >= 0` и `bets_counted >= 0` (§6); добавлена
+строка про неизвестный routing key в таблицу классификации (§7); оценка выросла с
+18–20 до 21–22 ч.
+
+---
+
+## 16. Вне объёма (осознанно)
 
 Аутентификация и ACL; несколько одновременных турниров и призовые; исторические курсы
 валют (беру текущие из конфига, фиксирую применённый курс в строке ставки); админка;
