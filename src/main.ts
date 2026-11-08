@@ -1,15 +1,17 @@
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module.js';
+import { configureApp } from './app.setup.js';
+import { APP_CONFIG } from './config/config.module.js';
+import type { AppConfig } from './config/app-config.js';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule);
 
-  // SIGTERM has to reach Nest's shutdown hooks, otherwise in-flight AMQP
-  // messages are dropped mid-transaction instead of being nacked back.
-  app.enableShutdownHooks();
+  configureApp(app);
 
-  await app.listen(Number(process.env['PORT'] ?? 3000));
+  const config = app.get<AppConfig>(APP_CONFIG);
+  await app.listen(config.port);
 }
 
 void bootstrap();

@@ -29,6 +29,9 @@ export default defineConfig({
     globals: true,
     root: './',
     include: ['test/integration/**/*.spec.ts'],
+    // Containers start once for the whole run and their URLs reach the workers
+    // through `inject`.
+    globalSetup: ['test/integration/support/containers.ts'],
     environment: 'node',
     testTimeout: 180_000,
     hookTimeout: 180_000,

@@ -1,0 +1,593 @@
+import type { DataSource } from 'typeorm';
+import { BetsRepository } from '../../src/database/repositories/bets.repository.js';
+import { PlayerScoresRepository } from '../../src/database/repositories/player-scores.repository.js';
+import { TournamentsRepository } from '../../src/database/repositories/tournaments.repository.js';
+import { TypeOrmUnitOfWork } from '../../src/database/unit-of-work.js';
+import type { SettledBetRow, TransactionScope } from '../../src/database/contracts/index.js';
+import { resetDatabase, startDatabase } from './support/app.js';
+import { BET_ID, OTHER_PLAYER_ID, PLAYER_ID } from '../support/builders.js';
+
+/**
+ * The SQL semantics the unit tests deliberately do not fake.
+ *
+ * `ON CONFLICT DO NOTHING`, a conditional `UPDATE … WHERE status = 'settled'`,
+ * an atomic increment and a ranking predicate are each a claim about what
+ * Postgres does, and the only honest way to check a claim about Postgres is to
+ * ask Postgres.
+ */
+let dataSource: DataSource;
+let bets: BetsRepository;
+let scores: PlayerScoresRepository;
+let tournaments: TournamentsRepository;
+let unitOfWork: TypeOrmUnitOfWork;
+let tournamentId: string;
+
+const WINDOW = {
+  code: 'nov-2026',
+  startsAt: new Date('2026-11-01T00:00:00.000Z'),
+  endsAt: new Date('2026-12-01T00:00:00.000Z'),
+};
+
+const SETTLED_AT = new Date('2026-11-15T10:00:00.000Z');
+
+beforeAll(async () => {
+  dataSource = await startDatabase();
+  bets = new BetsRepository(dataSource);
+  scores = new PlayerScoresRepository(dataSource);
+  tournaments = new TournamentsRepository(dataSource);
+  unitOfWork = new TypeOrmUnitOfWork(dataSource);
+}, 120_000);
+
+afterAll(async () => {
+  await dataSource?.destroy();
+});
+
+beforeEach(async () => {
+  await resetDatabase(dataSource);
+  tournamentId = (await tournaments.upsertByCode(WINDOW)).id;
+});
+
+/** Runs the body in a real transaction, like the scoring service does. */
+const inTransaction = <T>(work: (scope: TransactionScope) => Promise<T>): Promise<T> =>
+  unitOfWork.withTransaction(work);
+
+function settledRow(overrides: Partial<SettledBetRow> = {}): SettledBetRow {
+  return {
+    tournamentId,
+    betId: BET_ID,
+    playerId: PLAYER_ID,
+    currency: 'EUR',
+    stake: '10.0000',
+    winAmount: '10.4000',
+    fxRate: '1.08000000',
+    pointsAwarded: '11.232000',
+    settledAt: SETTLED_AT,
+    ...overrides,
+  };
+}
+
+describe('TournamentsRepository', () => {
+  it('creates the configured tournament and returns its id', async () => {
+    const tournament = await tournaments.findByCode({ code: 'nov-2026' });
+
+    expect(tournament?.id).toBe(tournamentId);
+    expect(tournament?.startsAt).toEqual(WINDOW.startsAt);
+  });
+
+  it('is idempotent, because it runs on every boot', async () => {
+    const again = await tournaments.upsertByCode(WINDOW);
+
+    expect(again.id).toBe(tournamentId);
+  });
+
+  it('moves the window without creating a second tournament', async () => {
+    const moved = await tournaments.upsertByCode({
+      ...WINDOW,
+      endsAt: new Date('2027-01-01T00:00:00.000Z'),
+    });
+
+    expect(moved.id).toBe(tournamentId);
+    expect(moved.endsAt).toEqual(new Date('2027-01-01T00:00:00.000Z'));
+  });
+
+  it('returns null for a code nobody configured', async () => {
+    expect(await tournaments.findByCode({ code: 'dec-2026' })).toBeNull();
+  });
+});
+
+describe('BetsRepository.insertSettled', () => {
+  it('reports a first write as inserted', async () => {
+    const result = await inTransaction((scope) => bets.insertSettled({ scope, bet: settledRow() }));
+
+    expect(result).toBe('inserted');
+  });
+
+  it('reports a redelivery as a duplicate instead of failing', async () => {
+    // This is the whole of idempotency: at-least-once delivery becomes
+    // effectively-once because the second write is a no-op the caller can see.
+    await inTransaction((scope) => bets.insertSettled({ scope, bet: settledRow() }));
+
+    const second = await inTransaction((scope) => bets.insertSettled({ scope, bet: settledRow() }));
+
+    expect(second).toBe('duplicate');
+  });
+
+  it('leaves the stored row untouched on a redelivery', async () => {
+    await inTransaction((scope) => bets.insertSettled({ scope, bet: settledRow() }));
+    await inTransaction((scope) =>
+      bets.insertSettled({ scope, bet: settledRow({ winAmount: '999.0000' }) }),
+    );
+
+    const stored = await bets.findOne({ tournamentId, betId: BET_ID });
+    expect(stored?.winAmount).toBe('10.4000');
+  });
+
+  it('stores money and points at the column scale', async () => {
+    await inTransaction((scope) => bets.insertSettled({ scope, bet: settledRow() }));
+
+    const stored = await bets.findOne({ tournamentId, betId: BET_ID });
+    expect(stored).toMatchObject({
+      status: 'settled',
+      currency: 'EUR',
+      stake: '10.0000',
+      winAmount: '10.4000',
+      fxRate: '1.08000000',
+      pointsAwarded: '11.232000',
+    });
+    expect(stored?.settledAt).toEqual(SETTLED_AT);
+  });
+
+  it('fills in a tombstone and keeps the bet void', async () => {
+    // A rollback arrived first, so the amounts were unknown. The late settle
+    // records them for the audit trail and scores nothing.
+    await inTransaction((scope) =>
+      bets.insertTombstone({ scope, tournamentId, betId: BET_ID, playerId: PLAYER_ID }),
+    );
+
+    const result = await inTransaction((scope) => bets.insertSettled({ scope, bet: settledRow() }));
+
+    expect(result).toBe('tombstone_filled');
+    const stored = await bets.findOne({ tournamentId, betId: BET_ID });
+    expect(stored?.status).toBe('rolled_back');
+    expect(stored?.winAmount).toBe('10.4000');
+    expect(stored?.pointsAwarded).toBe('0.000000');
+  });
+
+  it('treats a settle that follows a completed rollback as a duplicate', async () => {
+    await inTransaction((scope) => bets.insertSettled({ scope, bet: settledRow() }));
+    await inTransaction((scope) => bets.markRolledBack({ scope, tournamentId, betId: BET_ID }));
+
+    const result = await inTransaction((scope) => bets.insertSettled({ scope, bet: settledRow() }));
+
+    expect(result).toBe('duplicate');
+  });
+
+  it('keeps two tournaments apart, even for the same bet id', async () => {
+    const other = await tournaments.upsertByCode({
+      code: 'dec-2026',
+      startsAt: new Date('2026-12-01T00:00:00.000Z'),
+      endsAt: new Date('2027-01-01T00:00:00.000Z'),
+    });
+
+    await inTransaction((scope) => bets.insertSettled({ scope, bet: settledRow() }));
+    const result = await inTransaction((scope) =>
+      bets.insertSettled({ scope, bet: settledRow({ tournamentId: other.id }) }),
+    );
+
+    expect(result).toBe('inserted');
+  });
+});
+
+describe('BetsRepository.markRolledBack', () => {
+  it('voids a settled bet and reports what it had scored', async () => {
+    await inTransaction((scope) => bets.insertSettled({ scope, bet: settledRow() }));
+
+    const voided = await inTransaction((scope) =>
+      bets.markRolledBack({ scope, tournamentId, betId: BET_ID }),
+    );
+
+    expect(voided).toEqual({ playerId: PLAYER_ID, pointsAwarded: '11.232000' });
+    expect((await bets.findOne({ tournamentId, betId: BET_ID }))?.status).toBe('rolled_back');
+  });
+
+  it('reports nothing the second time, which is what stops a double debit', async () => {
+    await inTransaction((scope) => bets.insertSettled({ scope, bet: settledRow() }));
+    await inTransaction((scope) => bets.markRolledBack({ scope, tournamentId, betId: BET_ID }));
+
+    const again = await inTransaction((scope) =>
+      bets.markRolledBack({ scope, tournamentId, betId: BET_ID }),
+    );
+
+    expect(again).toBeNull();
+  });
+
+  it('reports nothing for a bet it has never seen', async () => {
+    const voided = await inTransaction((scope) =>
+      bets.markRolledBack({ scope, tournamentId, betId: BET_ID }),
+    );
+
+    expect(voided).toBeNull();
+  });
+});
+
+describe('BetsRepository.insertTombstone', () => {
+  it('records a rollback for a bet that has not settled yet', async () => {
+    const inserted = await inTransaction((scope) =>
+      bets.insertTombstone({ scope, tournamentId, betId: BET_ID, playerId: PLAYER_ID }),
+    );
+
+    expect(inserted).toBe(true);
+    const stored = await bets.findOne({ tournamentId, betId: BET_ID });
+    expect(stored).toMatchObject({ status: 'rollback_pending', pointsAwarded: '0.000000' });
+    expect(stored?.currency).toBeNull();
+    expect(stored?.settledAt).toBeNull();
+  });
+
+  it('reports false when a row is already there, instead of raising a conflict', async () => {
+    // Two rollbacks racing each other is a no-op, not an error.
+    await inTransaction((scope) =>
+      bets.insertTombstone({ scope, tournamentId, betId: BET_ID, playerId: PLAYER_ID }),
+    );
+
+    const again = await inTransaction((scope) =>
+      bets.insertTombstone({ scope, tournamentId, betId: BET_ID, playerId: PLAYER_ID }),
+    );
+
+    expect(again).toBe(false);
+  });
+});
+
+describe('BetsRepository.latestScoringSettledAt', () => {
+  const earlier = new Date('2026-11-05T00:00:00.000Z');
+  const later = new Date('2026-11-20T00:00:00.000Z');
+
+  it('returns the latest settle among the bets that still score', async () => {
+    await inTransaction(async (scope) => {
+      await bets.insertSettled({ scope, bet: settledRow({ betId: BET_ID, settledAt: earlier }) });
+      await bets.insertSettled({
+        scope,
+        bet: settledRow({ betId: OTHER_PLAYER_ID, settledAt: later }),
+      });
+    });
+
+    const latest = await inTransaction((scope) =>
+      bets.latestScoringSettledAt({ scope, tournamentId, playerId: PLAYER_ID }),
+    );
+
+    expect(latest).toEqual(later);
+  });
+
+  it('ignores a bet that was rolled back', async () => {
+    await inTransaction(async (scope) => {
+      await bets.insertSettled({ scope, bet: settledRow({ betId: BET_ID, settledAt: earlier }) });
+      await bets.insertSettled({
+        scope,
+        bet: settledRow({ betId: OTHER_PLAYER_ID, settledAt: later }),
+      });
+    });
+    await inTransaction((scope) =>
+      bets.markRolledBack({ scope, tournamentId, betId: OTHER_PLAYER_ID }),
+    );
+
+    const latest = await inTransaction((scope) =>
+      bets.latestScoringSettledAt({ scope, tournamentId, playerId: PLAYER_ID }),
+    );
+
+    expect(latest).toEqual(earlier);
+  });
+
+  it('ignores a bet that scored nothing', async () => {
+    // A losing bet is not when the player last earned points.
+    await inTransaction(async (scope) => {
+      await bets.insertSettled({ scope, bet: settledRow({ betId: BET_ID, settledAt: earlier }) });
+      await bets.insertSettled({
+        scope,
+        bet: settledRow({
+          betId: OTHER_PLAYER_ID,
+          settledAt: later,
+          winAmount: '0.0000',
+          pointsAwarded: '0.000000',
+        }),
+      });
+    });
+
+    const latest = await inTransaction((scope) =>
+      bets.latestScoringSettledAt({ scope, tournamentId, playerId: PLAYER_ID }),
+    );
+
+    expect(latest).toEqual(earlier);
+  });
+
+  it('returns null when the player has nothing left that scores', async () => {
+    expect(
+      await inTransaction((scope) =>
+        bets.latestScoringSettledAt({ scope, tournamentId, playerId: PLAYER_ID }),
+      ),
+    ).toBeNull();
+  });
+});
+
+describe('PlayerScoresRepository.credit', () => {
+  const settledAt = SETTLED_AT;
+
+  it('creates the row on the first scoring bet', async () => {
+    await inTransaction((scope) =>
+      scores.credit({ scope, tournamentId, playerId: PLAYER_ID, points: '11.232000', settledAt }),
+    );
+
+    expect(await scores.findOne({ tournamentId, playerId: PLAYER_ID })).toEqual({
+      playerId: PLAYER_ID,
+      points: '11.232000',
+      betsCounted: 1,
+      lastScoredAt: settledAt,
+    });
+  });
+
+  it('adds to the running total rather than replacing it', async () => {
+    await inTransaction((scope) =>
+      scores.credit({ scope, tournamentId, playerId: PLAYER_ID, points: '11.232000', settledAt }),
+    );
+    await inTransaction((scope) =>
+      scores.credit({ scope, tournamentId, playerId: PLAYER_ID, points: '0.768000', settledAt }),
+    );
+
+    const row = await scores.findOne({ tournamentId, playerId: PLAYER_ID });
+    expect(row?.points).toBe('12.000000');
+    expect(row?.betsCounted).toBe(2);
+  });
+
+  it('survives concurrent credits for the same player without losing one', async () => {
+    // The reason this is an upsert with an increment and not a read, add,
+    // write: a lost increment never comes back, and no retry can notice.
+    await Promise.all(
+      Array.from({ length: 25 }, () =>
+        inTransaction((scope) =>
+          scores.credit({
+            scope,
+            tournamentId,
+            playerId: PLAYER_ID,
+            points: '1.000000',
+            settledAt,
+          }),
+        ),
+      ),
+    );
+
+    const row = await scores.findOne({ tournamentId, playerId: PLAYER_ID });
+    expect(row?.points).toBe('25.000000');
+    expect(row?.betsCounted).toBe(25);
+  });
+
+  it('counts a losing bet but leaves the tie-break key unset', async () => {
+    // Zero points is not a moment of scoring, and the CHECK constraint allows
+    // the key to stay null only because the points are zero.
+    await inTransaction((scope) =>
+      scores.credit({ scope, tournamentId, playerId: PLAYER_ID, points: '0.000000', settledAt }),
+    );
+
+    expect(await scores.findOne({ tournamentId, playerId: PLAYER_ID })).toEqual({
+      playerId: PLAYER_ID,
+      points: '0.000000',
+      betsCounted: 1,
+      lastScoredAt: null,
+    });
+  });
+
+  it('does not let a later losing bet move the tie-break key', async () => {
+    // Otherwise a loss would push a player down among equal scores without
+    // changing the score.
+    await inTransaction((scope) =>
+      scores.credit({ scope, tournamentId, playerId: PLAYER_ID, points: '5.000000', settledAt }),
+    );
+    await inTransaction((scope) =>
+      scores.credit({
+        scope,
+        tournamentId,
+        playerId: PLAYER_ID,
+        points: '0.000000',
+        settledAt: new Date('2026-11-20T00:00:00.000Z'),
+      }),
+    );
+
+    const row = await scores.findOne({ tournamentId, playerId: PLAYER_ID });
+    expect(row?.lastScoredAt).toEqual(settledAt);
+    expect(row?.betsCounted).toBe(2);
+  });
+
+  it('keeps the latest scoring moment when events arrive out of order', async () => {
+    await inTransaction((scope) =>
+      scores.credit({
+        scope,
+        tournamentId,
+        playerId: PLAYER_ID,
+        points: '1.000000',
+        settledAt: new Date('2026-11-20T00:00:00.000Z'),
+      }),
+    );
+    await inTransaction((scope) =>
+      scores.credit({
+        scope,
+        tournamentId,
+        playerId: PLAYER_ID,
+        points: '1.000000',
+        settledAt: new Date('2026-11-05T00:00:00.000Z'),
+      }),
+    );
+
+    expect((await scores.findOne({ tournamentId, playerId: PLAYER_ID }))?.lastScoredAt).toEqual(
+      new Date('2026-11-20T00:00:00.000Z'),
+    );
+  });
+});
+
+describe('PlayerScoresRepository.debit', () => {
+  beforeEach(async () => {
+    await inTransaction((scope) =>
+      scores.credit({
+        scope,
+        tournamentId,
+        playerId: PLAYER_ID,
+        points: '11.232000',
+        settledAt: SETTLED_AT,
+      }),
+    );
+  });
+
+  it('subtracts the points and the bet, and resets the tie-break key', async () => {
+    await inTransaction((scope) =>
+      scores.debit({
+        scope,
+        tournamentId,
+        playerId: PLAYER_ID,
+        points: '11.232000',
+        lastScoredAt: null,
+      }),
+    );
+
+    expect(await scores.findOne({ tournamentId, playerId: PLAYER_ID })).toEqual({
+      playerId: PLAYER_ID,
+      points: '0.000000',
+      betsCounted: 0,
+      lastScoredAt: null,
+    });
+  });
+
+  it('assigns the recomputed key rather than keeping the old one', async () => {
+    const remaining = new Date('2026-11-05T00:00:00.000Z');
+
+    await inTransaction((scope) =>
+      scores.debit({
+        scope,
+        tournamentId,
+        playerId: PLAYER_ID,
+        points: '1.232000',
+        lastScoredAt: remaining,
+      }),
+    );
+
+    const row = await scores.findOne({ tournamentId, playerId: PLAYER_ID });
+    expect(row?.points).toBe('10.000000');
+    expect(row?.lastScoredAt).toEqual(remaining);
+  });
+
+  it('refuses to drive a score below zero', async () => {
+    // Unreachable through the service, which only debits a bet it just moved
+    // out of `settled`. The constraint is what makes that reasoning checkable.
+    await expect(
+      inTransaction((scope) =>
+        scores.debit({
+          scope,
+          tournamentId,
+          playerId: PLAYER_ID,
+          points: '99.000000',
+          lastScoredAt: null,
+        }),
+      ),
+    ).rejects.toThrow(/player_scores_points_non_negative/);
+  });
+
+  it('drops only the tally when a losing bet is voided', async () => {
+    await inTransaction((scope) =>
+      scores.decrementCounted({ scope, tournamentId, playerId: PLAYER_ID }),
+    );
+
+    const row = await scores.findOne({ tournamentId, playerId: PLAYER_ID });
+    expect(row?.points).toBe('11.232000');
+    expect(row?.betsCounted).toBe(0);
+  });
+});
+
+describe('PlayerScoresRepository.top and rankOf', () => {
+  const player = (n: number): string => `55555555-5555-4555-8555-00000000000${n}`;
+  const at = (day: number): Date => new Date(`2026-11-${String(day).padStart(2, '0')}T00:00:00Z`);
+
+  async function seed(
+    rows: { playerId: string; points: string; settledAt: Date | null }[],
+  ): Promise<void> {
+    await inTransaction(async (scope) => {
+      for (const row of rows) {
+        await scores.credit({
+          scope,
+          tournamentId,
+          playerId: row.playerId,
+          points: row.points,
+          settledAt: row.settledAt ?? at(1),
+        });
+      }
+    });
+  }
+
+  it('orders by points, then by who got there first, then by id', async () => {
+    await seed([
+      { playerId: player(1), points: '50.000000', settledAt: at(20) },
+      { playerId: player(2), points: '90.000000', settledAt: at(10) },
+      { playerId: player(3), points: '50.000000', settledAt: at(5) },
+    ]);
+
+    const top = await scores.top({ tournamentId, limit: 10 });
+
+    expect(top.map((row) => row.playerId)).toEqual([player(2), player(3), player(1)]);
+  });
+
+  it('breaks a complete tie by player id, so the order never wobbles', async () => {
+    await seed([
+      { playerId: player(2), points: '50.000000', settledAt: at(10) },
+      { playerId: player(1), points: '50.000000', settledAt: at(10) },
+    ]);
+
+    const top = await scores.top({ tournamentId, limit: 10 });
+
+    expect(top.map((row) => row.playerId)).toEqual([player(1), player(2)]);
+  });
+
+  it('puts players who never scored last', async () => {
+    await seed([
+      { playerId: player(1), points: '0.000000', settledAt: null },
+      { playerId: player(2), points: '1.000000', settledAt: at(10) },
+    ]);
+
+    const top = await scores.top({ tournamentId, limit: 10 });
+
+    expect(top.map((row) => row.playerId)).toEqual([player(2), player(1)]);
+    expect(top[1]?.lastScoredAt).toBeNull();
+  });
+
+  it('returns no more than the limit', async () => {
+    await seed([
+      { playerId: player(1), points: '10.000000', settledAt: at(10) },
+      { playerId: player(2), points: '20.000000', settledAt: at(10) },
+      { playerId: player(3), points: '30.000000', settledAt: at(10) },
+    ]);
+
+    expect(await scores.top({ tournamentId, limit: 2 })).toHaveLength(2);
+  });
+
+  it('agrees with the order of the top it is ranking within', async () => {
+    // The position has to be computed by the same key the list is sorted by,
+    // or a player sees a rank that contradicts the row they are standing on.
+    await seed([
+      { playerId: player(1), points: '50.000000', settledAt: at(20) },
+      { playerId: player(2), points: '90.000000', settledAt: at(10) },
+      { playerId: player(3), points: '50.000000', settledAt: at(5) },
+    ]);
+
+    const top = await scores.top({ tournamentId, limit: 10 });
+    const ranks = await Promise.all(top.map((row) => scores.rankOf({ tournamentId, row })));
+
+    expect(ranks).toEqual([1, 2, 3]);
+  });
+
+  it('counts only the players strictly above a row', async () => {
+    await seed([
+      { playerId: player(1), points: '90.000000', settledAt: at(10) },
+      { playerId: player(2), points: '50.000000', settledAt: at(10) },
+    ]);
+    const row = await scores.findOne({ tournamentId, playerId: player(2) });
+
+    expect(await scores.rankOf({ tournamentId, row: row! })).toBe(2);
+  });
+
+  it('returns null for a player with no row at all', async () => {
+    expect(await scores.findOne({ tournamentId, playerId: player(9) })).toBeNull();
+  });
+});
