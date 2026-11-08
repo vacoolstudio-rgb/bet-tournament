@@ -182,3 +182,13 @@ export async function queueArguments(
 
   return { ...body.arguments, 'queue-type': body.type };
 }
+
+/** How many deliveries a queue is waiting on an acknowledgement for. */
+export async function unacknowledged(managementUrl: string, queue: string): Promise<number> {
+  const response = await management(managementUrl, `queues/%2F/${queue}`);
+  if (!response.ok) throw new Error(`management API said ${response.status} for ${queue}`);
+
+  const body = (await response.json()) as { messages_unacknowledged?: number };
+
+  return body.messages_unacknowledged ?? 0;
+}

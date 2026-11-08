@@ -153,6 +153,34 @@ describe('scoring settled bets', () => {
 });
 
 describe('rolling bets back', () => {
+  it('subtracts what it credited, not what the rate says today', async () => {
+    // The invariant that cost the most thought and had the least evidence: a
+    // rollback reads `points_awarded` off the journal rather than recomputing
+    // win × rate. The two agree right up until the configured rate changes
+    // between the settle and the rollback — and then recomputing leaves the
+    // difference behind forever, as points nobody won. Here the rate nearly
+    // doubles in between, which is not a realistic FX move but is a realistic
+    // config fix.
+    settle(settledEvent({ currency: 'EUR', winAmount: '10.4000' }));
+    await awaitPoints('11.232000');
+
+    // The consumer is restarted with a different rate for the same currency,
+    // the way a redeploy with a corrected config would do it.
+    await app.close();
+    app = await startApp({ fxRates: { EUR: '2.00', GBP: '1.27', UAH: '0.024' } });
+
+    rollback(rollbackEvent());
+
+    // Exactly zero. Recomputed at the new rate it would have debited 20.8 and
+    // the aggregate would have gone negative — caught by a CHECK, so the
+    // rollback would fail and retry forever; floored at zero instead it would
+    // silently lose the 9.568 difference. Either way the number below is the
+    // only one that means "the credit was undone".
+    await awaitPoints('0.000000');
+    expect((await bet())?.points_awarded).toBe('11.232000');
+    expect((await score())?.bets_counted).toBe(0);
+  });
+
   it('returns the score to where it started', async () => {
     settle(settledEvent());
     await awaitPoints('11.232000');
