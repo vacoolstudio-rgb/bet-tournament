@@ -296,7 +296,7 @@ bets (
   bet_id         uuid        not null,
   player_id      uuid        not null,
   status         text        not null,       -- 'settled' | 'rolled_back' | 'rollback_pending'
-  currency       char(3)       null,         -- null только у надгробия
+  currency       varchar(10)   null,         -- null только у надгробия
   stake          numeric(20,4) null,
   win_amount     numeric(20,4) null,
   fx_rate        numeric(20,8) null,         -- курс, по которому считали
@@ -321,7 +321,7 @@ player_scores (
   player_id      uuid        not null,
   points         numeric(20,6) not null default 0,
   bets_counted   integer     not null default 0,
-  last_scored_at timestamptz not null,       -- когда последний раз получил очки
+  last_scored_at timestamptz null,           -- null = никогда не набирал очков
   updated_at     timestamptz not null default now(),
   primary key (tournament_id, player_id),
   check (points >= 0),

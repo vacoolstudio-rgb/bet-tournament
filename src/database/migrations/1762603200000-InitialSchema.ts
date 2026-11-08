@@ -28,7 +28,7 @@ export class InitialSchema1762603200000 implements MigrationInterface {
         bet_id         uuid          NOT NULL,
         player_id      uuid          NOT NULL,
         status         text          NOT NULL,
-        currency       char(3)       NULL,
+        currency       varchar(10)   NULL,
         stake          numeric(20,4) NULL,
         win_amount     numeric(20,4) NULL,
         fx_rate        numeric(20,8) NULL,

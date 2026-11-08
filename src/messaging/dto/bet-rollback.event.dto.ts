@@ -1,4 +1,5 @@
 import { IsOptional, IsUUID, Matches } from 'class-validator';
+import { CURRENCY_PATTERN } from '../../common/currency.js';
 import type { BetRollbackEvent } from '../contracts/index.js';
 import { IsIsoTimestamp } from './is-iso-timestamp.decorator.js';
 import { IsMoneyAmount } from './is-money-amount.decorator.js';
@@ -27,7 +28,9 @@ export class BetRollbackEventDto implements BetRollbackEvent {
   playerId: string;
 
   @IsOptional()
-  @Matches(/^[A-Z]{3}$/, { message: 'currency must be a 3-letter uppercase code' })
+  @Matches(CURRENCY_PATTERN, {
+    message: 'currency must be 3 to 10 uppercase letters or digits',
+  })
   currency?: string;
 
   @IsOptional()

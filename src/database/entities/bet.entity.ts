@@ -1,4 +1,5 @@
 import { Column, Entity, PrimaryColumn } from 'typeorm';
+import { CURRENCY_MAX_LENGTH } from '../../common/currency.js';
 
 /**
  * Lifecycle of a bet inside a tournament.
@@ -31,8 +32,8 @@ export class Bet {
   @Column({ type: 'text' })
   status: BetStatus;
 
-  /** Null only on a tombstone. */
-  @Column({ type: 'char', length: 3, nullable: true })
+  /** Null only on a tombstone. See CURRENCY_PATTERN for the accepted shape. */
+  @Column({ type: 'varchar', length: CURRENCY_MAX_LENGTH, nullable: true })
   currency: string | null;
 
   @Column({ type: 'numeric', precision: 20, scale: 4, nullable: true })

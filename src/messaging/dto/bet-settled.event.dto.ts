@@ -1,4 +1,5 @@
 import { IsUUID, Matches } from 'class-validator';
+import { CURRENCY_PATTERN } from '../../common/currency.js';
 import type { BetSettledEvent } from '../contracts/index.js';
 import { IsIsoTimestamp } from './is-iso-timestamp.decorator.js';
 import { IsMoneyAmount } from './is-money-amount.decorator.js';
@@ -17,12 +18,15 @@ export class BetSettledEventDto implements BetSettledEvent {
   playerId: string;
 
   /**
-   * Validated as a 3-letter code rather than against the ISO-4217 list: the
-   * set of currencies that can be scored is whatever `FX_RATES` says, and a
-   * gambling platform may well settle in something the list has never heard
-   * of. An unknown code is rejected later, by the FX lookup, with a reason.
+   * Validated for shape, not against the ISO-4217 list: what can actually be
+   * scored is whatever `FX_RATES` says, and an unconfigured code is rejected
+   * later by the FX lookup, with a reason in the parking headers.
+   *
+   * @see CURRENCY_PATTERN for why the shape is wider than three letters.
    */
-  @Matches(/^[A-Z]{3}$/, { message: 'currency must be a 3-letter uppercase code' })
+  @Matches(CURRENCY_PATTERN, {
+    message: 'currency must be 3 to 10 uppercase letters or digits',
+  })
   currency: string;
 
   /** Kept for audit; it does not take part in scoring. */

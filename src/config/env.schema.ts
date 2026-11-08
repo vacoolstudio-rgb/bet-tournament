@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { BASE_CURRENCY, CURRENCY_PATTERN } from '../common/currency.js';
 import { isFxRate, MAX_FX_RATE } from '../common/money.js';
 
 /**
@@ -34,7 +35,7 @@ const fxRatesSchema = z
   })
   .pipe(
     z.record(
-      z.string().regex(/^[A-Z]{3}$/, 'currency must be a 3-letter uppercase code'),
+      z.string().regex(CURRENCY_PATTERN, 'currency must be 3 to 10 uppercase letters or digits'),
       // Validated through the same predicate the money module uses, because
       // `z.string()` alone accepted "abc" and "-1" as rates: the union let a
       // string past without a single check.
@@ -46,8 +47,8 @@ const fxRatesSchema = z
   .transform((rates) =>
     Object.fromEntries(Object.entries(rates).map(([code, rate]) => [code, String(rate)])),
   )
-  .refine((rates) => !('USD' in rates), {
-    message: 'USD must not be listed in FX_RATES: its rate is hardcoded to 1',
+  .refine((rates) => !(BASE_CURRENCY in rates), {
+    message: `${BASE_CURRENCY} must not be listed in FX_RATES: its rate is hardcoded to 1`,
   });
 
 export const envSchema = z

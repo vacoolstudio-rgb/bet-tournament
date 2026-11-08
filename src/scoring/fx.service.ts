@@ -5,9 +5,6 @@ import { APP_CONFIG } from '../config/config.module.js';
 import { notImplemented } from '../common/not-implemented.error.js';
 import type { ConvertToUsdInput, FxPort } from './scoring.contract.js';
 
-/** The one currency whose rate is not configurable. */
-export const BASE_CURRENCY = 'USD';
-
 @Injectable()
 export class FxService implements FxPort {
   constructor(@Inject(APP_CONFIG) private readonly config: AppConfig) {}
