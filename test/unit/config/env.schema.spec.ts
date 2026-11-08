@@ -1,4 +1,4 @@
-import { loadConfig } from '../../../src/config/app-config.js';
+import { ConfigurationError, loadConfig } from '../../../src/config/app-config.js';
 
 /** The minimum a valid environment has to carry. */
 function env(overrides: Record<string, string | undefined> = {}): NodeJS.ProcessEnv {
@@ -23,6 +23,19 @@ describe('loadConfig', () => {
     expect(config.rabbit.prefetch).toBe(20);
     expect(config.rabbit.maxAttempts).toBe(5);
     expect(config.rabbit.retryTtlMs).toBe(10_000);
+  });
+
+  it('sizes the connection pool from the prefetch, so handlers do not queue', () => {
+    // A delivery is handled in a transaction, so `prefetch` handlers in flight
+    // want `prefetch` connections. Left at the driver's default of ten, a
+    // prefetch of fifty would have forty handlers waiting on connections with
+    // nothing in the logs to explain the lost throughput.
+    expect(loadConfig(env({ RABBITMQ_PREFETCH: '50' })).databasePoolMax).toBe(55);
+    expect(loadConfig(env()).databasePoolMax).toBe(25);
+  });
+
+  it('lets the pool be set explicitly when the default is wrong', () => {
+    expect(loadConfig(env({ DATABASE_POOL_MAX: '8' })).databasePoolMax).toBe(8);
   });
 
   it('shapes the result by concern rather than by variable name', () => {
@@ -98,10 +111,27 @@ describe('loadConfig', () => {
       loadConfig(env({ PORT: '0', LOG_LEVEL: 'chatty' }));
       expect.unreachable('should have thrown');
     } catch (error) {
-      const message = JSON.stringify(error);
+      expect(error).toBeInstanceOf(ConfigurationError);
+      expect((error as ConfigurationError).message).toContain('PORT');
+      expect((error as ConfigurationError).message).toContain('LOG_LEVEL');
+    }
+  });
 
-      expect(message).toContain('PORT');
-      expect(message).toContain('LOG_LEVEL');
+  it('reads as a configuration message, not as a validator dump', () => {
+    // What an operator sees when a container will not start. The raw ZodError
+    // is forty lines of JSON with `code`, `expected` and `path` arrays, and it
+    // arrives through the framework's exception handler as though the
+    // framework had crashed.
+    try {
+      loadConfig(env({ FX_RATES: '{"USD":1}' }));
+      expect.unreachable('should have thrown');
+    } catch (error) {
+      const message = (error as Error).message;
+
+      expect(message).toMatch(/^Configuration is invalid:/);
+      expect(message).toContain('FX_RATES: USD must not be listed');
+      // One line per problem, and nothing else.
+      expect(message.split('\n')).toHaveLength(2);
     }
   });
 });

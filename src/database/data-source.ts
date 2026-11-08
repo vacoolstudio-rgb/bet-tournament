@@ -17,6 +17,9 @@ export function createDataSourceOptions(config: AppConfig): DataSourceOptions {
     migrations,
     synchronize: false,
     migrationsRun: false,
+    // Sized from the prefetch, not left at the driver's ten — see
+    // AppConfig.databasePoolMax for why the two belong together.
+    extra: { max: config.databasePoolMax },
     logging: config.nodeEnv === 'development' ? ['error', 'warn', 'migration'] : ['error'],
   };
 }

@@ -22,6 +22,7 @@ export function testConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     port: 0,
     log: { level: 'error', pretty: false },
     databaseUrl: inject('databaseUrl'),
+    databasePoolMax: 25,
     rabbit: {
       url: inject('amqpUrl'),
       prefetch: 20,

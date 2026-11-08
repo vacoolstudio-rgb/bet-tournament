@@ -142,6 +142,7 @@ export function fakeConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     port: 3000,
     log: { level: 'error', pretty: false },
     databaseUrl: 'postgresql://user:pass@localhost:5432/db',
+    databasePoolMax: 25,
     rabbit: {
       url: 'amqp://user:pass@localhost:5672',
       prefetch: 20,

@@ -1,5 +1,30 @@
+import { ZodError } from 'zod';
 import type { Env } from './env.schema.js';
 import { envSchema } from './env.schema.js';
+
+/**
+ * A configuration error, phrased for whoever is looking at the logs.
+ *
+ * Raised instead of letting the ZodError out, because the raw one is forty
+ * lines of JSON — `code`, `expected`, `received`, a `path` array per issue —
+ * printed by the framework's exception handler after "Starting Nest
+ * application...", which makes a missing environment variable look like the
+ * framework crashed.
+ */
+export class ConfigurationError extends Error {
+  constructor(readonly issues: readonly { path: string; message: string }[]) {
+    super(
+      [
+        'Configuration is invalid:',
+        ...issues.map(({ path, message }) => `  ${path}: ${message}`),
+      ].join('\n'),
+    );
+    this.name = 'ConfigurationError';
+  }
+}
+
+/** Connections kept aside for reads and the health check. */
+const POOL_SPARE = 5;
 
 /** Validated configuration, shaped by concern rather than by variable name. */
 export interface AppConfig {
@@ -10,6 +35,17 @@ export interface AppConfig {
     readonly pretty: boolean;
   };
   readonly databaseUrl: string;
+  /**
+   * Maximum pooled connections.
+   *
+   * Tied to the prefetch rather than left to the driver's default of ten: a
+   * delivery is handled in a transaction, so `prefetch` handlers in flight
+   * want `prefetch` connections, and a smaller pool makes the rest queue
+   * invisibly — throughput drops with nothing in the logs to say why. The
+   * spare few are for the health check and the leaderboard reads, which must
+   * not wait behind a backlog of writes.
+   */
+  readonly databasePoolMax: number;
   readonly rabbit: {
     readonly url: string;
     readonly prefetch: number;
@@ -35,17 +71,33 @@ export interface AppConfig {
  * This is a mapping, not logic: the validation lives in the zod schema, so it
  * is written out in full here rather than stubbed.
  *
- * @throws ZodError with every offending variable at once — one failed boot per
- *         misconfiguration, not one per variable.
+ * @throws ConfigurationError listing every offending variable at once — one
+ *         failed boot per misconfiguration, not one per variable.
  */
 export function loadConfig(source: NodeJS.ProcessEnv = process.env): AppConfig {
-  const env = envSchema.parse(source);
+  let env: Env;
+
+  try {
+    env = envSchema.parse(source);
+  } catch (error) {
+    if (!(error instanceof ZodError)) throw error;
+
+    throw new ConfigurationError(
+      error.issues.map((issue) => ({
+        // The root refinement — a window that ends before it starts — has no
+        // single variable to blame, so it is attributed to the whole config.
+        path: issue.path.length > 0 ? issue.path.join('.') : 'FX_RATES/TOURNAMENT_*',
+        message: issue.message,
+      })),
+    );
+  }
 
   return {
     nodeEnv: env.NODE_ENV,
     port: env.PORT,
     log: { level: env.LOG_LEVEL, pretty: env.LOG_PRETTY },
     databaseUrl: env.DATABASE_URL,
+    databasePoolMax: env.DATABASE_POOL_MAX ?? env.RABBITMQ_PREFETCH + POOL_SPARE,
     rabbit: {
       url: env.RABBITMQ_URL,
       prefetch: env.RABBITMQ_PREFETCH,

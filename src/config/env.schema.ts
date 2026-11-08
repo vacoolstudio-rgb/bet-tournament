@@ -60,6 +60,13 @@ export const envSchema = z
 
     // Schemes are checked so a typo fails the boot with the variable's name
     // instead of a connection error ten seconds later.
+    /**
+     * Connections the pool may open. Optional: the default is derived from the
+     * prefetch below, because that is what decides how many handlers can be
+     * mid-transaction at once.
+     */
+    DATABASE_POOL_MAX: z.coerce.number().int().positive().max(1000).optional(),
+
     DATABASE_URL: z
       .string()
       .regex(/^postgres(ql)?:\/\//, 'DATABASE_URL must start with postgres:// or postgresql://'),
