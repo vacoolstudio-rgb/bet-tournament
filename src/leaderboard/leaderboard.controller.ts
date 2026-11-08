@@ -1,9 +1,15 @@
 import { Controller, Get, Inject, Query } from '@nestjs/common';
-import { ApiHeader, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBadRequestResponse,
+  ApiHeader,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
+import { ErrorResponseDto } from '../common/dto/error-response.dto.js';
 import { LeaderboardQueryDto, LeaderboardResponseDto } from './dto/index.js';
-import { LEADERBOARD_SERVICE } from './leaderboard.contract.js';
+import { DEFAULT_LEADERBOARD_LIMIT, LEADERBOARD_SERVICE } from './leaderboard.contract.js';
 import type { LeaderboardPort, LeaderboardView } from './leaderboard.contract.js';
-import { DEFAULT_LEADERBOARD_LIMIT } from './leaderboard.service.js';
 import { PlayerId } from './player-id.decorator.js';
 import { PlayerIdPipe } from './player-id.pipe.js';
 
@@ -30,6 +36,13 @@ export class LeaderboardController {
     description: 'Player UUID. When present, the response carries a `me` block.',
   })
   @ApiOkResponse({ type: LeaderboardResponseDto })
+  @ApiBadRequestResponse({
+    type: ErrorResponseDto,
+    description:
+      '`limit` outside 1..100, or an `X-Player-Id` that is not a valid player id. A ' +
+      'malformed id is rejected rather than ignored: answering "you have no points" to a ' +
+      'player who has some would be worse than an error.',
+  })
   getLeaderboard(
     @Query() query: LeaderboardQueryDto,
     @PlayerId(PlayerIdPipe) playerId: string | undefined,

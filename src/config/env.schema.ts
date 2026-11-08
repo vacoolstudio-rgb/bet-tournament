@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isFxRate, MAX_FX_RATE } from '../common/money.js';
 
 /**
  * Environment contract. Invalid configuration fails the process on boot
@@ -34,7 +35,12 @@ const fxRatesSchema = z
   .pipe(
     z.record(
       z.string().regex(/^[A-Z]{3}$/, 'currency must be a 3-letter uppercase code'),
-      z.union([z.number().positive(), z.string()]),
+      // Validated through the same predicate the money module uses, because
+      // `z.string()` alone accepted "abc" and "-1" as rates: the union let a
+      // string past without a single check.
+      z.union([z.number(), z.string()]).refine(isFxRate, {
+        message: `rate must be a positive decimal no greater than ${MAX_FX_RATE}`,
+      }),
     ),
   )
   .transform((rates) =>
@@ -51,9 +57,15 @@ export const envSchema = z
     LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
     LOG_PRETTY: booleanFromEnv,
 
-    DATABASE_URL: z.string().min(1),
+    // Schemes are checked so a typo fails the boot with the variable's name
+    // instead of a connection error ten seconds later.
+    DATABASE_URL: z
+      .string()
+      .regex(/^postgres(ql)?:\/\//, 'DATABASE_URL must start with postgres:// or postgresql://'),
 
-    RABBITMQ_URL: z.string().min(1),
+    RABBITMQ_URL: z
+      .string()
+      .regex(/^amqps?:\/\//, 'RABBITMQ_URL must start with amqp:// or amqps://'),
     RABBITMQ_PREFETCH: z.coerce.number().int().positive().max(1000).default(20),
     RABBITMQ_MAX_ATTEMPTS: z.coerce.number().int().positive().max(100).default(5),
     RABBITMQ_RETRY_TTL_MS: z.coerce.number().int().positive().default(10_000),

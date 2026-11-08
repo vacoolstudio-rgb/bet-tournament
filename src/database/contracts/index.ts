@@ -1,6 +1,7 @@
 export { BETS_REPOSITORY } from './bets.repository.port.js';
 export type {
   BetIdentity,
+  BetRecord,
   BetsRepositoryPort,
   InsertSettledBetInput,
   InsertSettledResult,
@@ -26,6 +27,7 @@ export type {
 export { TOURNAMENTS_REPOSITORY } from './tournaments.repository.port.js';
 export type {
   TournamentCodeQuery,
+  TournamentRecord,
   TournamentsRepositoryPort,
   TournamentWindow,
 } from './tournaments.repository.port.js';

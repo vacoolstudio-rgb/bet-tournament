@@ -23,13 +23,18 @@ export class PlayerScore {
   /**
    * When the player last *earned* points — the tie-break for equal scores.
    *
+   * Null means "has never scored", which is a state a row really can be in: a
+   * player whose first bet lost has a row with zero points, and a player whose
+   * every bet was rolled back is back to that state. Writing a timestamp there
+   * anyway would claim they scored at a moment they did not, and the tie-break
+   * would read it as "reached this score first".
+   *
    * Only moved by a bet that awarded more than zero, otherwise a losing bet
    * would change a player's position without changing their score. Recomputed
-   * on rollback, otherwise it would keep pointing at a bet that no longer
-   * counts.
+   * on rollback from the bets that still count.
    */
-  @Column({ name: 'last_scored_at', type: 'timestamptz' })
-  lastScoredAt: Date;
+  @Column({ name: 'last_scored_at', type: 'timestamptz', nullable: true })
+  lastScoredAt: Date | null;
 
   @Column({ name: 'updated_at', type: 'timestamptz', default: () => 'now()' })
   updatedAt: Date;

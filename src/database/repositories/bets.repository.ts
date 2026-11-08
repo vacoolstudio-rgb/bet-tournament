@@ -3,6 +3,7 @@ import { DataSource } from 'typeorm';
 import { notImplemented } from '../../common/not-implemented.error.js';
 import type {
   BetIdentity,
+  BetRecord,
   BetsRepositoryPort,
   InsertSettledBetInput,
   InsertSettledResult,
@@ -11,8 +12,6 @@ import type {
   PlayerBetsQuery,
   VoidedBet,
 } from '../contracts/index.js';
-import type { Bet } from '../entities/index.js';
-
 /** Postgres adapter for {@link BetsRepositoryPort}. */
 @Injectable()
 export class BetsRepository implements BetsRepositoryPort {
@@ -34,7 +33,7 @@ export class BetsRepository implements BetsRepositoryPort {
     return notImplemented('BetsRepository.latestScoringSettledAt', this.dataSource);
   }
 
-  findOne(_input: BetIdentity): Promise<Bet | null> {
+  findOne(_input: BetIdentity): Promise<BetRecord | null> {
     return notImplemented('BetsRepository.findOne', this.dataSource);
   }
 }

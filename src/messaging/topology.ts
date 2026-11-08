@@ -29,6 +29,9 @@ export const HEADER_PARK_REASON = 'x-park-reason';
 export const HEADER_PARK_ERROR = 'x-park-error';
 export const HEADER_PARK_ROUTING_KEY = 'x-park-routing-key';
 export const HEADER_PARK_ATTEMPTS = 'x-park-attempts';
+export const HEADER_PARK_AT = 'x-park-at';
+/** RabbitMQ's own dead-letter record, read to count retry hops. */
+export const HEADER_X_DEATH = 'x-death';
 
 export interface TopologyOptions {
   /** How long a failed message waits before coming back. */

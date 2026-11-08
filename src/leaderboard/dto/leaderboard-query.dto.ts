@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import { IsInt, IsOptional, Max, Min } from 'class-validator';
+import { MAX_LEADERBOARD_LIMIT } from '../leaderboard.contract.js';
 
 export class LeaderboardQueryDto {
   /**
@@ -11,6 +12,6 @@ export class LeaderboardQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(100)
+  @Max(MAX_LEADERBOARD_LIMIT)
   limit?: number;
 }

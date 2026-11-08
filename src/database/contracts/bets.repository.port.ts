@@ -1,4 +1,4 @@
-import type { Bet } from '../entities/index.js';
+import type { BetStatus } from '../entities/index.js';
 import type { TransactionScope } from './transaction.js';
 
 /** Identifies a bet inside a tournament — the journal's primary key. */
@@ -58,6 +58,27 @@ export interface InsertTombstoneInput extends BetIdentity {
   readonly playerId: string;
 }
 
+/**
+ * A journal row as the port exposes it.
+ *
+ * Deliberately not the TypeORM entity: a port that hands back an entity makes
+ * every caller a client of the ORM, and the entity carries lazy-loading and
+ * change-tracking behaviour that has no meaning outside the repository.
+ */
+export interface BetRecord extends BetIdentity {
+  readonly playerId: string;
+  readonly status: BetStatus;
+  /** Null only on a tombstone — a rollback that arrived before the settle. */
+  readonly currency: string | null;
+  readonly stake: string | null;
+  readonly winAmount: string | null;
+  readonly fxRate: string | null;
+  readonly pointsAwarded: string;
+  readonly settledAt: Date | null;
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
+}
+
 export interface PlayerBetsQuery {
   readonly scope: TransactionScope;
   readonly tournamentId: string;
@@ -92,7 +113,7 @@ export interface BetsRepositoryPort {
   latestScoringSettledAt(input: PlayerBetsQuery): Promise<Date | null>;
 
   /** Reads one journal row, outside any transaction. */
-  findOne(input: BetIdentity): Promise<Bet | null>;
+  findOne(input: BetIdentity): Promise<BetRecord | null>;
 }
 
 export const BETS_REPOSITORY = Symbol('BetsRepositoryPort');

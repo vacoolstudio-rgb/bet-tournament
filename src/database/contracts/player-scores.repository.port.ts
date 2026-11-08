@@ -6,7 +6,8 @@ export interface PlayerScoreRow {
   /** NUMERIC(20,6) — exact points. */
   readonly points: string;
   readonly betsCounted: number;
-  readonly lastScoredAt: Date;
+  /** Null when the player has never scored; see the entity for why. */
+  readonly lastScoredAt: Date | null;
 }
 
 export interface PlayerKey {
@@ -26,7 +27,11 @@ export interface DebitPointsInput extends PlayerKey {
   readonly scope: TransactionScope;
   /** Exactly what the voided bet had scored. */
   readonly points: string;
-  /** Recomputed tie-break key, or null to leave the current value alone. */
+  /**
+   * Recomputed tie-break key: the latest `settled_at` among the bets that
+   * still score, or null when none are left. Assigned, not coalesced — a
+   * player whose last scoring bet was just voided has not scored.
+   */
   readonly lastScoredAt: Date | null;
 }
 
@@ -67,6 +72,10 @@ export interface PlayerScoresRepositoryPort {
   /**
    * 1-based position of a row in that same order, counted as "how many sort
    * strictly above it" rather than by numbering the whole table.
+   *
+   * Only meaningful for a row with points: the caller must not ask for the
+   * position of a zero-points player, because a tournament has no position for
+   * someone who has not scored in it.
    */
   rankOf(query: RankQuery): Promise<number>;
 }

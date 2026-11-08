@@ -77,22 +77,36 @@ export class InitialSchema1762603200000 implements MigrationInterface {
         player_id      uuid          NOT NULL,
         points         numeric(20,6) NOT NULL DEFAULT 0,
         bets_counted   int           NOT NULL DEFAULT 0,
-        last_scored_at timestamptz   NOT NULL,
+        last_scored_at timestamptz   NULL,
         updated_at     timestamptz   NOT NULL DEFAULT now(),
         PRIMARY KEY (tournament_id, player_id),
         -- Points are only ever subtracted on the settled -> rolled_back
         -- transition, which happens once and for the stored amount, so these
         -- can never trip. They are here to catch the day that stops being true.
         CONSTRAINT player_scores_points_non_negative CHECK (points >= 0),
-        CONSTRAINT player_scores_bets_non_negative  CHECK (bets_counted >= 0)
+        CONSTRAINT player_scores_bets_non_negative  CHECK (bets_counted >= 0),
+        -- Points can only come from a scoring bet, and a scoring bet sets the
+        -- tie-break key: a row with points but no key would mean the two were
+        -- updated apart.
+        CONSTRAINT player_scores_scored_has_key CHECK (
+          points = 0 OR last_scored_at IS NOT NULL
+        )
       )
     `);
 
     // The exact ordering of the leaderboard: score first, then who reached it
-    // first, then the id as a deterministic last resort.
+    // first, then the id as a deterministic last resort. NULLS LAST is spelled
+    // out even though it is the default for ASC — the index has to match the
+    // ORDER BY exactly or the sort is not free, and a reader should not have to
+    // remember which default applies.
     await queryRunner.query(`
       CREATE INDEX player_scores_leaderboard_idx
-        ON player_scores (tournament_id, points DESC, last_scored_at ASC, player_id ASC)
+        ON player_scores (
+          tournament_id,
+          points DESC,
+          last_scored_at ASC NULLS LAST,
+          player_id ASC
+        )
     `);
   }
 

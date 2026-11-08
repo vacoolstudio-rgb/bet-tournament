@@ -1,5 +1,6 @@
-import { IsISO8601, IsOptional, IsUUID, Matches } from 'class-validator';
+import { IsOptional, IsUUID, Matches } from 'class-validator';
 import type { BetRollbackEvent } from '../contracts/index.js';
+import { IsIsoTimestamp } from './is-iso-timestamp.decorator.js';
 import { IsMoneyAmount } from './is-money-amount.decorator.js';
 
 /**
@@ -38,6 +39,6 @@ export class BetRollbackEventDto implements BetRollbackEvent {
   winAmount?: string | number;
 
   @IsOptional()
-  @IsISO8601({ strict: true })
+  @IsIsoTimestamp()
   settledAt?: string;
 }

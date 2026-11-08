@@ -8,6 +8,8 @@ import type {
   OutcomeClassifierPort,
   ParkingPort,
 } from './contracts/index.js';
+import { METRICS } from '../observability/metrics.contract.js';
+import type { MetricsPort } from '../observability/metrics.contract.js';
 import {
   EXCHANGE_BETS,
   QUEUE_BETS,
@@ -27,6 +29,7 @@ export class BetEventsConsumer {
     @Inject(BET_EVENT_PROCESSOR) private readonly processor: BetEventProcessorPort,
     @Inject(OUTCOME_CLASSIFIER) private readonly classifier: OutcomeClassifierPort,
     @Inject(PARKING_PUBLISHER) private readonly parking: ParkingPort,
+    @Inject(METRICS) private readonly metrics: MetricsPort,
   ) {}
 
   /**
@@ -56,6 +59,7 @@ export class BetEventsConsumer {
       this.processor,
       this.classifier,
       this.parking,
+      this.metrics,
     );
   }
 }

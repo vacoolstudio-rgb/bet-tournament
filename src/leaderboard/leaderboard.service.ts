@@ -6,8 +6,6 @@ import { TOURNAMENT_SERVICE } from '../scoring/scoring.contract.js';
 import type { TournamentPort } from '../scoring/scoring.contract.js';
 import type { LeaderboardPort, LeaderboardQuery, LeaderboardView } from './leaderboard.contract.js';
 
-export const DEFAULT_LEADERBOARD_LIMIT = 100;
-
 @Injectable()
 export class LeaderboardService implements LeaderboardPort {
   constructor(

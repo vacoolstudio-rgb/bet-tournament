@@ -1,5 +1,6 @@
-import { IsISO8601, IsUUID, Matches } from 'class-validator';
+import { IsUUID, Matches } from 'class-validator';
 import type { BetSettledEvent } from '../contracts/index.js';
+import { IsIsoTimestamp } from './is-iso-timestamp.decorator.js';
 import { IsMoneyAmount } from './is-money-amount.decorator.js';
 
 /**
@@ -33,6 +34,6 @@ export class BetSettledEventDto implements BetSettledEvent {
   winAmount: string | number;
 
   /** Decides whether the bet falls inside the tournament window. */
-  @IsISO8601({ strict: true })
+  @IsIsoTimestamp()
   settledAt: string;
 }

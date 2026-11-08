@@ -1,5 +1,3 @@
-import type { Tournament } from '../entities/index.js';
-
 export interface TournamentWindow {
   readonly code: string;
   /** Inclusive. */
@@ -12,6 +10,12 @@ export interface TournamentCodeQuery {
   readonly code: string;
 }
 
+/** A tournament row as the port exposes it, with its generated id. */
+export interface TournamentRecord extends TournamentWindow {
+  readonly id: string;
+  readonly createdAt: Date;
+}
+
 export interface TournamentsRepositoryPort {
   /**
    * Makes the configured tournament exist and returns it.
@@ -20,9 +24,9 @@ export interface TournamentsRepositoryPort {
    * window. Points already scored are never recomputed — moving the window
    * does not retroactively include or exclude bets.
    */
-  upsertByCode(window: TournamentWindow): Promise<Tournament>;
+  upsertByCode(window: TournamentWindow): Promise<TournamentRecord>;
 
-  findByCode(query: TournamentCodeQuery): Promise<Tournament | null>;
+  findByCode(query: TournamentCodeQuery): Promise<TournamentRecord | null>;
 }
 
 export const TOURNAMENTS_REPOSITORY = Symbol('TournamentsRepositoryPort');
