@@ -12,6 +12,7 @@ import {
   ROUTING_KEY_ROLLBACK,
   ROUTING_KEY_SETTLED,
 } from '../../src/messaging/topology.js';
+import { TEST_RETRY_TTL_MS } from './support/app.js';
 import { connectBroker, queueArguments } from './support/broker.js';
 import type { Broker } from './support/broker.js';
 import { settledEvent } from '../support/builders.js';
@@ -24,7 +25,15 @@ import { settledEvent } from '../support/builders.js';
  *
  * The TTL is short here; everything else is exactly what the service declares.
  */
-const RETRY_TTL_MS = 1_200;
+/**
+ * The same delay the application is configured with in tests.
+ *
+ * Not a local constant: the other suites boot the application, which declares
+ * these very queues, and a queue cannot be re-declared with a different TTL —
+ * the two numbers drifting apart would surface as a PRECONDITION_FAILED with
+ * nothing in it about TTLs.
+ */
+const RETRY_TTL_MS = TEST_RETRY_TTL_MS;
 const topology = buildTopology({ retryTtlMs: RETRY_TTL_MS });
 
 let broker: Broker;

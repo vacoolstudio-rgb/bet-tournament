@@ -690,6 +690,44 @@ describe('PlayerScoresRepository.top and rankOf', () => {
     expect(await scores.rankOf({ tournamentId, row: row! })).toBe(2);
   });
 
+  it('agrees with a window function over the whole table, ties and nulls included', async () => {
+    // Stronger than the hand-built cases above: the predicate is checked
+    // against an independent formulation of the same order, on a board built
+    // to contain every awkward shape at once — equal scores, equal scores at
+    // the same instant, and players who never scored.
+    //
+    // A ranking predicate is easy to get subtly wrong (a `>=` where a `>`
+    // belongs, a NULL comparison that silently yields false), and such a bug
+    // shows up as a position that contradicts the list the player is looking
+    // at, which is exactly the sort of thing nobody reports clearly.
+    const rows = Array.from({ length: 40 }, (_, index) => ({
+      playerId: `bbbbbbbb-bbbb-4bbb-8bbb-${String(index).padStart(12, '0')}`,
+      points: index % 5 === 0 ? '0.000000' : `${(index % 4) * 10}.000000`,
+      settledAt: index % 3 === 0 ? at(10) : at(20),
+    }));
+    await seed(
+      rows.map((row) => ({ ...row, settledAt: row.points === '0.000000' ? null : row.settledAt })),
+    );
+
+    const reference = await dataSource.query<{ player_id: string; rank: string }[]>(
+      `SELECT player_id,
+              row_number() OVER (
+                ORDER BY points DESC, last_scored_at ASC NULLS LAST, player_id ASC
+              ) AS rank
+         FROM player_scores WHERE tournament_id = $1`,
+      [tournamentId],
+    );
+
+    for (const expected of reference) {
+      const row = await scores.findOne({ tournamentId, playerId: expected.player_id });
+      if (row === null) throw new Error(`seeded row ${expected.player_id} vanished`);
+      // Only players with points have a position at all.
+      if (row.points === '0.000000') continue;
+
+      expect(await scores.rankOf({ tournamentId, row })).toBe(Number(expected.rank));
+    }
+  });
+
   it('returns null for a player with no row at all', async () => {
     expect(await scores.findOne({ tournamentId, playerId: player(9) })).toBeNull();
   });

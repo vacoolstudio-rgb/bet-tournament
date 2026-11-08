@@ -414,28 +414,39 @@ Retry-очередь — classic, а не quorum: `x-message-ttl` у classic-о�
 **`bet.settled`:**
 
 ```
-points := winAmount × fx_rate(currency)         -- decimal.js, до транзакции
 если settledAt вне окна турнира → ack, метрика, выход
+    (проверка окна строго раньше курса: ставка вне турнира в валюте, которой
+     нет в конфиге, — это «не наше дело», а не отравленное сообщение, и
+     парковать её значило бы завести ручную работу на пустом месте)
+points := winAmount × fx_rate(currency)         -- decimal.js, до транзакции
 BEGIN
   INSERT INTO bets (…, status='settled', points_awarded=points)
     ON CONFLICT (tournament_id, bet_id) DO UPDATE
       SET currency=…, stake=…, win_amount=…, fx_rate=…, settled_at=…,
           status='rolled_back', updated_at=now()
       WHERE bets.status = 'rollback_pending'          -- дозаполняем надгробие
-    RETURNING (xmax = 0) AS inserted
-  если не inserted → COMMIT, ack
-      (дубль, либо ставка уже откатана — очки не начисляем ни в одном случае)
-  INSERT INTO player_scores (…, points, bets_counted=1, last_scored_at=settledAt)
-    ON CONFLICT (tournament_id, player_id) DO UPDATE
-      SET points        = player_scores.points + excluded.points,
-          bets_counted  = player_scores.bets_counted + 1,
-          last_scored_at = CASE WHEN excluded.points > 0
-                                THEN greatest(player_scores.last_scored_at,
-                                              excluded.last_scored_at)
-                                ELSE player_scores.last_scored_at END,
-          updated_at = now()
+    RETURNING status
+  0 строк              → дубль: конфликт со ставкой, которая не надгробие
+  status='rolled_back' → надгробие дозаполнено, очки не начисляем
+  status='settled'     → вставка новая, начисляем:
+    INSERT INTO player_scores (…, points, bets_counted=1,
+                               last_scored_at = CASE WHEN points > 0
+                                                     THEN settledAt ELSE NULL END)
+      ON CONFLICT (tournament_id, player_id) DO UPDATE
+        SET points        = player_scores.points + excluded.points,
+            bets_counted  = player_scores.bets_counted + 1,
+            last_scored_at = CASE WHEN excluded.points > 0
+                                  THEN greatest(player_scores.last_scored_at,
+                                                excluded.last_scored_at)
+                                  ELSE player_scores.last_scored_at END,
+            updated_at = now()
 COMMIT → ack
 ```
+
+Три исхода вставки различаются без `xmax`: вставка всегда пишет `settled`,
+дозаполнение надгробия всегда `rolled_back`, а конфликт с обычной ставкой не
+возвращает строки вовсе. `greatest` в Postgres игнорирует NULL, поэтому игрок с
+пустым ключом получает время первого же начисления — проверено на живой базе.
 
 Проигрышная ставка (`points = 0`) увеличивает `bets_counted`, но не сдвигает
 `last_scored_at` — иначе она меняла бы позицию игрока, не меняя его очков.
@@ -496,12 +507,33 @@ X-Player-Id: 4f2e… (опционально)
 
 Два запроса вместо одного оконного по всей таблице:
 
-1. Топ — `ORDER BY points DESC, last_scored_at ASC, player_id ASC LIMIT :limit`, идёт по индексу.
+1. Топ — `ORDER BY points DESC, last_scored_at ASC NULLS LAST, player_id ASC LIMIT :limit`,
+   идёт по индексу без сортировки в памяти.
 2. Позиция — `COUNT(*) + 1` по тому же порядку:
    `points > :p OR (points = :p AND (last_scored_at < :t OR (last_scored_at = :t AND player_id < :id)))`.
 
-`ROW_NUMBER() OVER (…)` по всей таблице был бы короче, но это полный проход ради одной
-строки. Компромисс и порог, на котором нужен Redis ZSET, — в DECISIONS.
+Замерено на 50 000 игроков (`EXPLAIN ANALYZE`, с тай-брейками и NULL-ключами):
+
+| Запрос | План | Время |
+|---|---|---|
+| топ-100 | index scan | 0.06 мс |
+| позиция игрока около 10-го места | index scan | 0.06 мс |
+| позиция игрока около 25 000-го места | **seq scan** | 5.8 мс |
+| `ROW_NUMBER()` по всей таблице | index scan + оконная функция | 21–23 мс |
+
+Первая формулировка этого раздела гласила «позиция идёт по индексу», и для
+половины игроков это неправда: когда выше стоит половина таблицы, планировщик
+совершенно справедливо выбирает seq scan, потому что читать 25 000 строк по
+индексу дороже, чем подряд. Преимущество над `ROW_NUMBER()` при этом остаётся
+в обоих случаях, но по разной причине: вверху таблицы — потому что индекс
+отсекает почти всё, в середине — потому что посчитать строки дешевле, чем
+пронумеровать и материализовать их.
+
+Практический вывод для DECISIONS: при 50 000 участников худший случай — около
+6 мс на запрос, то есть Postgres хватает с большим запасом, и Redis ZSET
+понадобился бы не раньше сотен тысяч активных игроков или требования отдавать
+лидерборд из кеша без обращения к БД. Оба способа дают одинаковый ранг —
+сходимость проверена отдельным тестом, а не на глаз.
 
 Плюс `GET /health`, `GET /metrics`, Swagger на `/api/docs`.
 
