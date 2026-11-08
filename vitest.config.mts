@@ -43,15 +43,32 @@ export default defineConfig({
         '**/*.spec.ts',
         '**/index.ts',
         '**/*.module.ts',
+        '**/*.contract.ts',
+        '**/*.port.ts',
         'src/main.ts',
+        'src/app.setup.ts',
         'src/database/migrations/**',
         'src/database/data-source.ts',
         '**/*.dto.ts',
         '**/*.entity.ts',
+        // Covered by the integration suite, which runs under its own config
+        // and reports separately. Left in, these read as near-zero and invite
+        // someone to "fix" the number by unit-testing SQL against a mock —
+        // which would assert that the mock agrees with itself.
+        'src/database/repositories/**',
+        'src/database/unit-of-work.ts',
+        'src/health/**',
+        'src/observability/metrics.controller.ts',
+        'src/leaderboard/leaderboard.controller.ts',
       ],
+      // `npm run test:cov` measures the unit suite only. The thresholds sit on
+      // the code that suite is responsible for; the adapters are excluded
+      // above rather than held to a number no unit test should be meeting.
       thresholds: {
-        // Scoring is where the money logic lives; it carries the bar.
+        // Scoring and money are where the money logic lives; they carry the bar.
         'src/scoring/**': { statements: 90, branches: 80, functions: 90, lines: 90 },
+        'src/common/**': { statements: 90, branches: 85, functions: 90, lines: 90 },
+        'src/messaging/**': { statements: 85, branches: 75, functions: 85, lines: 85 },
       },
     },
   },

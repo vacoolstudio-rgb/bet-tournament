@@ -27,6 +27,13 @@ export interface Broker {
   ack(message: Message): void;
   nack(message: Message, requeue: boolean): void;
   depth(queue: string): Promise<number>;
+  /**
+   * Empties the queues between tests. Without it a message a previous test
+   * left behind — one still cycling through the retry hop, say — arrives in
+   * the middle of the next one and makes it fail for a reason that is nowhere
+   * in its body.
+   */
+  purge(...queues: string[]): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -91,6 +98,10 @@ export async function connectBroker(url: string): Promise<Broker> {
 
     nack(message, requeue): void {
       channel.nack(message, false, requeue);
+    },
+
+    async purge(...queues): Promise<void> {
+      for (const queue of queues) await channel.purgeQueue(queue);
     },
 
     async depth(queue): Promise<number> {

@@ -4,8 +4,8 @@ import { PlayerScoresRepository } from '../../src/database/repositories/player-s
 import { TournamentsRepository } from '../../src/database/repositories/tournaments.repository.js';
 import { TypeOrmUnitOfWork } from '../../src/database/unit-of-work.js';
 import type { SettledBetRow, TransactionScope } from '../../src/database/contracts/index.js';
-import { resetDatabase, startDatabase } from './support/app.js';
-import { BET_ID, OTHER_PLAYER_ID, PLAYER_ID } from '../support/builders.js';
+import { resetAll, startDatabase } from './support/app.js';
+import { BET_ID, PLAYER_ID, SECOND_BET_ID } from '../support/builders.js';
 
 /**
  * The SQL semantics the unit tests deliberately do not fake.
@@ -43,7 +43,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await resetDatabase(dataSource);
+  await resetAll(dataSource);
   tournamentId = (await tournaments.upsertByCode(WINDOW)).id;
 });
 
@@ -246,7 +246,7 @@ describe('BetsRepository.latestScoringSettledAt', () => {
       await bets.insertSettled({ scope, bet: settledRow({ betId: BET_ID, settledAt: earlier }) });
       await bets.insertSettled({
         scope,
-        bet: settledRow({ betId: OTHER_PLAYER_ID, settledAt: later }),
+        bet: settledRow({ betId: SECOND_BET_ID, settledAt: later }),
       });
     });
 
@@ -262,11 +262,11 @@ describe('BetsRepository.latestScoringSettledAt', () => {
       await bets.insertSettled({ scope, bet: settledRow({ betId: BET_ID, settledAt: earlier }) });
       await bets.insertSettled({
         scope,
-        bet: settledRow({ betId: OTHER_PLAYER_ID, settledAt: later }),
+        bet: settledRow({ betId: SECOND_BET_ID, settledAt: later }),
       });
     });
     await inTransaction((scope) =>
-      bets.markRolledBack({ scope, tournamentId, betId: OTHER_PLAYER_ID }),
+      bets.markRolledBack({ scope, tournamentId, betId: SECOND_BET_ID }),
     );
 
     const latest = await inTransaction((scope) =>
@@ -283,7 +283,7 @@ describe('BetsRepository.latestScoringSettledAt', () => {
       await bets.insertSettled({
         scope,
         bet: settledRow({
-          betId: OTHER_PLAYER_ID,
+          betId: SECOND_BET_ID,
           settledAt: later,
           winAmount: '0.0000',
           pointsAwarded: '0.000000',
@@ -304,6 +304,50 @@ describe('BetsRepository.latestScoringSettledAt', () => {
         bets.latestScoringSettledAt({ scope, tournamentId, playerId: PLAYER_ID }),
       ),
     ).toBeNull();
+  });
+});
+
+describe('concurrency', () => {
+  it('lets exactly one of two identical settles through', async () => {
+    // The race the unit tests cannot stage: two consumers handed the same
+    // redelivered event at the same moment. One insert wins, the other has to
+    // come back as `duplicate` rather than as a constraint violation, because
+    // only the winner may credit the aggregate.
+    const results = await Promise.all([
+      inTransaction((scope) => bets.insertSettled({ scope, bet: settledRow() })),
+      inTransaction((scope) => bets.insertSettled({ scope, bet: settledRow() })),
+    ]);
+
+    expect(results.filter((result) => result === 'inserted')).toHaveLength(1);
+    expect(results.filter((result) => result === 'duplicate')).toHaveLength(1);
+  });
+
+  it('lets exactly one of two concurrent rollbacks void the bet', async () => {
+    // Two rollbacks arriving together must subtract once. The conditional
+    // update is what decides it: the second transaction waits on the row lock,
+    // then matches nothing because the status has moved on.
+    await inTransaction((scope) => bets.insertSettled({ scope, bet: settledRow() }));
+
+    const voided = await Promise.all([
+      inTransaction((scope) => bets.markRolledBack({ scope, tournamentId, betId: BET_ID })),
+      inTransaction((scope) => bets.markRolledBack({ scope, tournamentId, betId: BET_ID })),
+    ]);
+
+    expect(voided.filter((result) => result !== null)).toHaveLength(1);
+    expect(voided.filter((result) => result === null)).toHaveLength(1);
+  });
+
+  it('lets exactly one of two concurrent tombstones through', async () => {
+    const inserted = await Promise.all([
+      inTransaction((scope) =>
+        bets.insertTombstone({ scope, tournamentId, betId: BET_ID, playerId: PLAYER_ID }),
+      ),
+      inTransaction((scope) =>
+        bets.insertTombstone({ scope, tournamentId, betId: BET_ID, playerId: PLAYER_ID }),
+      ),
+    ]);
+
+    expect(inserted.filter(Boolean)).toHaveLength(1);
   });
 });
 

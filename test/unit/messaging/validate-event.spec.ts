@@ -49,6 +49,11 @@ describe('validateEvent', () => {
     ['a number body', 42],
     ['null', null],
     ['an array', [settledEvent()]],
+    // What the subscription actually hands over when the body is not JSON:
+    // `allowNonJsonMessages` passes the raw buffer through rather than
+    // throwing inside the library, where there would be no reason to attach.
+    ['a raw buffer', Buffer.from('{not json')],
+    ['an empty buffer', Buffer.alloc(0)],
   ])('rejects %s as poison', (_case, payload) => {
     expect(() => validateEvent({ dto: BetSettledEventDto, payload })).toThrow(PoisonMessageError);
   });

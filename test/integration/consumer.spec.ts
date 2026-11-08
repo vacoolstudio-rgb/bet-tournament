@@ -6,12 +6,13 @@ import {
   HEADER_PARK_REASON,
   QUEUE_BETS,
   QUEUE_PARKED,
+  QUEUE_RETRY,
   ROUTING_KEY_ROLLBACK,
   ROUTING_KEY_SETTLED,
 } from '../../src/messaging/topology.js';
 import {
+  resetAll,
   resetBroker,
-  resetDatabase,
   startApp,
   startDatabase,
   TEST_RETRY_TTL_MS,
@@ -23,7 +24,9 @@ import {
   OTHER_PLAYER_ID,
   PLAYER_ID,
   rollbackEvent,
+  SECOND_BET_ID,
   settledEvent,
+  THIRD_BET_ID,
 } from '../support/builders.js';
 
 /**
@@ -38,9 +41,6 @@ let app: Harness;
 let broker: Broker;
 let dataSource: DataSource;
 
-const SECOND_BET = '66666666-6666-4666-8666-666666666666';
-const THIRD_BET = '77777777-7777-4777-8777-777777777777';
-
 beforeAll(async () => {
   dataSource = await startDatabase();
   broker = await resetBroker();
@@ -54,8 +54,18 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await resetDatabase(dataSource);
+  // Order matters, and in this order for a reason:
+  //
+  //  1. stop the consumer, or it keeps handling messages while the tables are
+  //     being truncated and writes rows back into a clean database;
+  //  2. empty the queues, or a message still circling the retry hop from the
+  //     previous test arrives in the middle of this one and fails it for a
+  //     reason that is nowhere in its body;
+  //  3. truncate, tournaments included — safe only because the application is
+  //     started again right after and upserts that row from its config.
   await app.close();
+  await broker.purge(QUEUE_BETS, QUEUE_RETRY, QUEUE_PARKED);
+  await resetAll(dataSource);
   app = await startApp();
 });
 
@@ -96,8 +106,8 @@ describe('scoring settled bets', () => {
   it('awards one point per USD across several currencies', async () => {
     // 10.40 EUR at 1.08 -> 11.232; 10 GBP at 1.27 -> 12.7; 25 USD -> 25.
     settle(settledEvent({ betId: BET_ID, currency: 'EUR', winAmount: '10.4000' }));
-    settle(settledEvent({ betId: SECOND_BET, currency: 'GBP', winAmount: '10.0000' }));
-    settle(settledEvent({ betId: THIRD_BET, currency: 'USD', winAmount: '25.0000' }));
+    settle(settledEvent({ betId: SECOND_BET_ID, currency: 'GBP', winAmount: '10.0000' }));
+    settle(settledEvent({ betId: THIRD_BET_ID, currency: 'USD', winAmount: '25.0000' }));
 
     await awaitPoints('48.932000');
     expect((await score())?.bets_counted).toBe(3);
@@ -169,7 +179,7 @@ describe('rolling bets back', () => {
 
   it('subtracts once however many times the rollback arrives', async () => {
     settle(settledEvent({ betId: BET_ID }));
-    settle(settledEvent({ betId: SECOND_BET }));
+    settle(settledEvent({ betId: SECOND_BET_ID }));
     await awaitPoints('22.464000');
 
     rollback(rollbackEvent({ betId: BET_ID }));
@@ -288,6 +298,28 @@ describe('when the database is unavailable', () => {
     const headers = (message.properties.headers ?? {}) as Record<string, unknown>;
     expect(headers[HEADER_PARK_REASON]).toBe('attempts_exhausted');
     expect(headers[HEADER_PARK_ATTEMPTS]).toBe(3);
+  });
+});
+
+describe('from the queue to the endpoint', () => {
+  it('shows a scored bet on the leaderboard', async () => {
+    // The only test that closes the loop. Every other suite works on one side
+    // of the table — this one proves the writer and the reader agree about it.
+    settle(settledEvent({ currency: 'USD', winAmount: '25.0000' }));
+    await awaitPoints('25.000000');
+
+    const { body } = await app.http.get('/leaderboard').set('X-Player-Id', PLAYER_ID).expect(200);
+
+    expect(body.top).toEqual([
+      {
+        rank: 1,
+        playerId: PLAYER_ID,
+        points: 25,
+        pointsExact: '25.000000',
+        betsCounted: 1,
+      },
+    ]);
+    expect(body.me.rank).toBe(1);
   });
 });
 

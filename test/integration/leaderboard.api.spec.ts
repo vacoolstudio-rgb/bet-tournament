@@ -1,5 +1,5 @@
 import type { DataSource } from 'typeorm';
-import { resetDatabase, startApp, startDatabase } from './support/app.js';
+import { resetScores, startApp, startDatabase } from './support/app.js';
 import type { Harness } from './support/app.js';
 import { PLAYER_ID } from '../support/builders.js';
 
@@ -19,6 +19,15 @@ const player = (n: number): string => `99999999-9999-4999-8999-00000000000${n}`;
 beforeAll(async () => {
   dataSource = await startDatabase();
   app = await startApp();
+
+  // The row the application upserted on boot, and the id it has cached. The
+  // suite seeds against that id instead of creating a tournament of its own:
+  // a second row with a fresh uuid would leave every query the service makes
+  // pointing at an id nothing references.
+  const [row] = await dataSource.query<{ id: string }[]>(
+    `SELECT id FROM tournaments WHERE code = 'nov-2026'`,
+  );
+  tournamentId = row!.id;
 }, 180_000);
 
 afterAll(async () => {
@@ -27,13 +36,9 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await resetDatabase(dataSource);
-  const [row] = await dataSource.query<{ id: string }[]>(
-    `INSERT INTO tournaments (id, code, starts_at, ends_at)
-     VALUES (gen_random_uuid(), 'nov-2026', '2026-11-01T00:00:00Z', '2026-12-01T00:00:00Z')
-     RETURNING id`,
-  );
-  tournamentId = row!.id;
+  // Scores and bets only: the tournament row belongs to the running
+  // application.
+  await resetScores(dataSource);
 });
 
 async function seed(
@@ -223,8 +228,14 @@ describe('GET /leaderboard', () => {
       ['2026-10-15T00:00:00.000Z', '2026-10-31T00:00:00.000Z', 'finished'],
       ['2030-01-01T00:00:00.000Z', '2030-02-01T00:00:00.000Z', 'pending'],
     ])('reports a window of %s..%s as %s', async (startsAt, endsAt, status) => {
+      // Its own code: upserting a different window under the shared code would
+      // rewrite the row the other tests depend on.
       const other = await startApp({
-        tournament: { code: 'nov-2026', startsAt: new Date(startsAt), endsAt: new Date(endsAt) },
+        tournament: {
+          code: `probe-${status}`,
+          startsAt: new Date(startsAt),
+          endsAt: new Date(endsAt),
+        },
       });
 
       try {

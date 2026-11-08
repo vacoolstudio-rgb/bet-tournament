@@ -139,6 +139,20 @@ describe('toPoints', () => {
     expect(toPoints(new Decimal('1.0000'), new Decimal('0.00000019')).toString()).toBe('0');
   });
 
+  it('keeps every digit of a large amount times an eight-digit rate', () => {
+    // decimal.js defaults to 20 significant digits and this product needs 24:
+    // 13 integer digits, 4 from the amount's scale, 8 from the rate's. The
+    // exact value is 1000000009999.999899999999, so truncating to the points
+    // scale gives …999899 — whereas at the default precision the tail is
+    // rounded away first and the answer comes out …999900 instead.
+    //
+    // Six micro-points is nothing; being unable to say which number was
+    // credited is not, because the rollback has to subtract exactly that one.
+    const points = toPoints(new Decimal('999999999999.9999'), new Decimal('1.00000001'));
+
+    expect(points.toString()).toBe('1000000009999.999899');
+  });
+
   it('rejects a product the points column cannot hold', () => {
     // Both factors are individually acceptable; their product is not. Caught
     // here it is a parked message, uncaught it is a driver error that looks

@@ -2,8 +2,10 @@ import type { AmqpConnection } from '@golevelup/nestjs-rabbitmq';
 import type { ConsumeMessage } from 'amqplib';
 import { PoisonMessageError } from '../../../src/common/errors.js';
 import { ParkingPublisher } from '../../../src/messaging/parking.publisher.js';
+import { isIsoTimestamp } from '../../../src/common/time.js';
 import {
   EXCHANGE_PARKED,
+  HEADER_PARK_AT,
   HEADER_PARK_ATTEMPTS,
   HEADER_PARK_ERROR,
   HEADER_PARK_REASON,
@@ -66,6 +68,15 @@ describe('ParkingPublisher', () => {
     expect(headers[HEADER_PARK_ROUTING_KEY]).toBe(ROUTING_KEY_SETTLED);
     expect(headers[HEADER_PARK_ATTEMPTS]).toBe(1);
     expect(String(headers[HEADER_PARK_ERROR])).toContain('betId must be a UUID');
+  });
+
+  it('stamps when it gave up, so the parking queue can be read chronologically', async () => {
+    const { subject, amqp } = publisher();
+
+    await subject.park({ message: delivery(), outcome });
+
+    const headers = amqp.publish.mock.calls[0]?.[3]?.headers as Record<string, unknown>;
+    expect(isIsoTimestamp(headers[HEADER_PARK_AT])).toBe(true);
   });
 
   it('publishes persistently, so a broker restart does not lose the evidence', async () => {

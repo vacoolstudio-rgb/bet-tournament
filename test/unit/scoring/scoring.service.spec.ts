@@ -155,6 +155,16 @@ describe('ScoringService.settle', () => {
     expect(unitOfWork.withTransaction).not.toHaveBeenCalled();
   });
 
+  it('lets a failure inside the transaction out, so nothing is half-written', async () => {
+    // Swallowing this would commit the journal row without the points, and the
+    // bet would then be a duplicate forever — scored nowhere and unscoreable.
+    const { service, bets, scores } = subject();
+    bets.insertSettled.mockResolvedValue('inserted');
+    scores.credit.mockRejectedValue(new Error('deadlock detected'));
+
+    await expect(service.settle(settleCommand())).rejects.toThrow('deadlock detected');
+  });
+
   it('does the journal write and the credit in one transaction', async () => {
     const { service, bets, scores, unitOfWork } = subject();
     bets.insertSettled.mockResolvedValue('inserted');

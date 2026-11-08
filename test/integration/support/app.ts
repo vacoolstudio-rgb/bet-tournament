@@ -83,7 +83,21 @@ export async function startDatabase(): Promise<DataSource> {
   return dataSource;
 }
 
-export async function resetDatabase(dataSource: DataSource): Promise<void> {
+/**
+ * Clears the data a test writes, leaving the tournament row alone.
+ *
+ * The running application caches the tournament it upserted on boot, so
+ * truncating that row and inserting a fresh one would leave every query
+ * pointing at an id that no longer exists — and the suite would fail against a
+ * perfectly correct implementation. Use {@link resetAll} when the application
+ * is restarted afterwards anyway.
+ */
+export async function resetScores(dataSource: DataSource): Promise<void> {
+  await dataSource.query('TRUNCATE player_scores, bets');
+}
+
+/** Clears everything, including tournaments. Only safe before a (re)boot. */
+export async function resetAll(dataSource: DataSource): Promise<void> {
   await dataSource.query('TRUNCATE player_scores, bets, tournaments CASCADE');
 }
 
