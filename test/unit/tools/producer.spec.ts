@@ -182,6 +182,33 @@ describe('the scenarios that make a claim checkable', () => {
     expect(amounts).toEqual([...amounts].sort((a, b) => a - b));
   });
 
+  it('chaos produces every shape a bet can take, for one player', () => {
+    // The scenario behind the reconciliation test: whatever races it causes,
+    // the aggregate must still equal the journal, and that only means
+    // something if every shape is actually in there.
+    const messages = plan('chaos', 10);
+    const perBet = new Map<string, string[]>();
+
+    for (const message of messages) {
+      const betId = payloadOf(message).betId;
+      perBet.set(betId, [...(perBet.get(betId) ?? []), message.kind]);
+    }
+
+    const shapes = new Set([...perBet.values()].map((kinds) => kinds.join('+')));
+
+    expect(perBet.size).toBe(10);
+    expect(new Set(messages.map((message) => payloadOf(message).playerId)).size).toBe(1);
+    expect(shapes).toEqual(
+      new Set([
+        'settled',
+        'settled+rollback',
+        'settled+settled',
+        'rollback+settled',
+        'settled+rollback+rollback',
+      ]),
+    );
+  });
+
   it('load honours the count it was asked for', () => {
     expect(plan('load', 250)).toHaveLength(250);
   });

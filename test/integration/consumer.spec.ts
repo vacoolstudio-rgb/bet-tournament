@@ -19,6 +19,7 @@ import {
 } from './support/app.js';
 import type { Harness } from './support/app.js';
 import type { Broker } from './support/broker.js';
+import { planScenario } from '../../tools/producer.js';
 import {
   BET_ID,
   OTHER_PLAYER_ID,
@@ -351,6 +352,91 @@ describe('when the database is unavailable', () => {
     expect(headers[HEADER_PARK_REASON]).toBe('attempts_exhausted');
     expect(headers[HEADER_PARK_ATTEMPTS]).toBe(3);
   });
+});
+
+describe('after every shape of event at once', () => {
+  it('leaves the aggregate equal to the journal', async () => {
+    // The strongest statement that can be made about this service, and the
+    // one that does not depend on how any single race resolved: the
+    // leaderboard is a derived view, so it must agree with the bets it was
+    // derived from. Scored, rolled back, duplicated, out of order and
+    // rolled back twice — all interleaved, all contending for one aggregate
+    // row.
+    //
+    // The outcome of an individual bet here is genuinely a race. The
+    // reconciliation is not.
+    // Two consumers, so the contention is across processes as well as across
+    // deliveries: the aggregate row is the one thing they both have to agree
+    // about, and neither can see the other's uncommitted work.
+    const second = await startApp();
+    const bets = 40;
+    const plan = planScenario({ scenario: 'chaos', count: bets });
+
+    try {
+      for (const message of plan) {
+        if (message.kind === 'raw') continue;
+        broker.publish(EXCHANGE_BETS, message.routingKey, message.payload);
+      }
+
+      // Every bet reaches a terminal state; `rollback_pending` is terminal
+      // too — it is a bet whose settle never arrived.
+      await expect
+        .poll(
+          async () => {
+            const [row] = await dataSource.query<{ count: string }[]>(`SELECT count(*) FROM bets`);
+
+            return Number(row?.count ?? 0);
+          },
+          { timeout: 60_000 },
+        )
+        .toBe(bets);
+
+      // Give any still-in-flight rollback a moment to land before reconciling:
+      // a bet counted in the journal can still be mid-transaction.
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+
+      const [reconciliation] = await dataSource.query<
+        {
+          aggregate_points: string;
+          journal_points: string;
+          aggregate_bets: number;
+          journal_bets: string;
+        }[]
+      >(
+        `SELECT s.points                                   AS aggregate_points,
+              coalesce(j.points, 0)                      AS journal_points,
+              s.bets_counted                             AS aggregate_bets,
+              coalesce(j.bets, 0)                        AS journal_bets
+         FROM player_scores s
+         LEFT JOIN (
+           SELECT tournament_id, player_id,
+                  sum(points_awarded) AS points,
+                  count(*)            AS bets
+             FROM bets
+            WHERE status = 'settled'
+            GROUP BY tournament_id, player_id
+         ) j ON j.tournament_id = s.tournament_id AND j.player_id = s.player_id`,
+      );
+
+      if (reconciliation === undefined) throw new Error('no aggregate row to reconcile');
+
+      expect(Number(reconciliation.aggregate_points)).toBe(Number(reconciliation.journal_points));
+      expect(reconciliation.aggregate_bets).toBe(Number(reconciliation.journal_bets));
+
+      // And nothing ended up in a state the schema allows but the domain does
+      // not reach: a voided bet keeping its points, or a tombstone claiming any.
+      const [anomalies] = await dataSource.query<{ count: string }[]>(
+        `SELECT count(*) FROM bets
+        WHERE (status = 'rollback_pending' AND points_awarded <> 0)
+           OR (status = 'rolled_back' AND settled_at IS NOT NULL AND points_awarded < 0)`,
+      );
+      expect(Number(anomalies?.count ?? 0)).toBe(0);
+
+      expect(await broker.depth(QUEUE_PARKED)).toBe(0);
+    } finally {
+      await second.close();
+    }
+  }, 120_000);
 });
 
 describe('from the queue to the endpoint', () => {

@@ -35,6 +35,7 @@ export type ScenarioName =
   | 'rollback-stale-timestamp'
   | 'malformed'
   | 'board'
+  | 'chaos'
   | 'load';
 
 export interface Scenario {
@@ -75,6 +76,10 @@ export const scenarios: readonly Scenario[] = [
   {
     name: 'board',
     proves: 'the leaderboard is capped at a hundred rows and ordered by points',
+  },
+  {
+    name: 'chaos',
+    proves: 'the aggregate still equals the journal after every shape of event at once',
   },
   { name: 'load', proves: 'throughput and leaderboard latency under volume' },
 ];
@@ -267,6 +272,49 @@ export function planScenario({ scenario, count, window }: ProducerOptions): Plan
           }),
         ),
       );
+    }
+
+    case 'chaos': {
+      // Every shape a bet can take, interleaved across bets so they contend
+      // for the same aggregate row, and all for one player so the contention
+      // is maximal.
+      //
+      // The order within a bet is kept — a queue preserves publish order, and
+      // the concurrency comes from prefetch, not from reordering — but the
+      // bets are interleaved, which is what a producer replaying a log looks
+      // like. The outcome of any single bet is then a race; what must hold
+      // regardless is that the aggregate equals the journal.
+      const player = randomUUID();
+      const shapes = Array.from({ length: count }, (_, index) => {
+        const event = bet(w, { playerId: player, currency: 'USD', winAmount: '1.0000' });
+        const undo = rolledBack({ betId: event.betId, playerId: player });
+
+        switch (index % 5) {
+          case 0:
+            return [settled(event)];
+          case 1:
+            return [settled(event), undo];
+          case 2:
+            // The same message twice: a redelivery.
+            return [settled(event), settled(event)];
+          case 3:
+            // Out of order: the rollback arrives first.
+            return [undo, settled(event)];
+          default:
+            return [settled(event), undo, undo];
+        }
+      });
+
+      // Round robin, so bet N's second message lands after bet N+1's first.
+      const interleaved: PlannedMessage[] = [];
+      for (let step = 0; step < 3; step += 1) {
+        for (const shape of shapes) {
+          const message = shape[step];
+          if (message !== undefined) interleaved.push(message);
+        }
+      }
+
+      return interleaved;
     }
 
     case 'load': {
