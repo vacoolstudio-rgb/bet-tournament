@@ -1,10 +1,15 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { OnModuleInit } from '@nestjs/common';
 import type { ConsumeMessage } from 'amqplib';
-import { AmqpBroker } from './amqp-broker.js';
-import { BET_EVENT_PROCESSOR, OUTCOME_CLASSIFIER, PARKING_PUBLISHER } from './contracts/index.js';
+import {
+  BET_EVENT_PROCESSOR,
+  BROKER_CONSUME,
+  OUTCOME_CLASSIFIER,
+  PARKING_PUBLISHER,
+} from './contracts/index.js';
 import type {
   BetEventProcessorPort,
+  BrokerConsumePort,
   DeliveryVerdict,
   OutcomeClassifierPort,
   ParkingPort,
@@ -27,7 +32,7 @@ export class BetEventsConsumer implements OnModuleInit {
     @Inject(OUTCOME_CLASSIFIER) private readonly classifier: OutcomeClassifierPort,
     @Inject(PARKING_PUBLISHER) private readonly parking: ParkingPort,
     @Inject(METRICS) private readonly metrics: MetricsPort,
-    private readonly broker: AmqpBroker,
+    @Inject(BROKER_CONSUME) private readonly broker: BrokerConsumePort,
   ) {}
 
   /**

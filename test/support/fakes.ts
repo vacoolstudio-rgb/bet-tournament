@@ -10,10 +10,10 @@ import type {
 } from '../../src/database/contracts/index.js';
 import type {
   BetEventProcessorPort,
+  BrokerConsumePort,
   OutcomeClassifierPort,
   ParkingPort,
 } from '../../src/messaging/contracts/index.js';
-import type { AmqpBroker } from '../../src/messaging/amqp-broker.js';
 import type { MetricsPort } from '../../src/observability/metrics.contract.js';
 import type { FxPort, TournamentPort } from '../../src/scoring/scoring.contract.js';
 
@@ -114,15 +114,16 @@ export function fakeParking() {
 }
 
 /**
- * Enough of the broker for the consumer: it only registers a handler, and the
- * suite calls `handle` directly.
+ * The receiving half of the broker, which is all the consumer asks for: it
+ * registers a handler and the suite calls `handle` directly.
+ *
+ * Typed as the port, not cast from the class. The cast this replaced had to go
+ * through `unknown` — three methods cannot stand in for a class with a
+ * connection, a channel and a lifecycle — and a double that lies to the type
+ * system cannot tell you when the thing it doubles has changed.
  */
-export function fakeBroker() {
-  return {
-    consume: vi.fn(() => Promise.resolve()),
-    publish: vi.fn(() => Promise.resolve()),
-    isConnected: vi.fn(() => true),
-  } as unknown as AmqpBroker;
+export function fakeBroker(): BrokerConsumePort {
+  return { consume: vi.fn<BrokerConsumePort['consume']>(() => Promise.resolve()) };
 }
 
 export function fakeMetrics() {

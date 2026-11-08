@@ -5,14 +5,17 @@ export {
   BET_EVENT_PROCESSOR,
   MAX_EVENT_BYTES,
   BROKER,
+  BROKER_CONSUME,
   BROKER_HEALTH,
   OUTCOME_CLASSIFIER,
   PARKING_PUBLISHER,
 } from './ports.js';
 export type {
   BetEventProcessorPort,
+  BrokerConsumePort,
   BrokerHealthPort,
   BrokerPort,
+  DeliveryHandler,
   DeliveryVerdict,
   FailureContext,
   IncomingBetEvent,

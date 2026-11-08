@@ -96,6 +96,38 @@ export interface BrokerPort {
 
 export const BROKER = Symbol('BrokerPort');
 
+/**
+ * A handler the broker drives; its verdict decides ack or reject.
+ *
+ * Lives here rather than beside the implementation because the consumer is
+ * written against it: a handler shape owned by the adapter would mean the
+ * consumer importing the adapter to say what it is.
+ */
+export type DeliveryHandler = (
+  payload: unknown,
+  message: ConsumeMessage,
+) => Promise<DeliveryVerdict>;
+
+/**
+ * The receiving half of the broker.
+ *
+ * Separate from `BrokerPort` because publishing and consuming are needed by
+ * different callers — the parking publisher only publishes, the consumer only
+ * consumes — and a single interface would force each to depend on the half it
+ * does not use. One adapter implements both.
+ */
+export interface BrokerConsumePort {
+  /**
+   * Registers a handler for a queue and starts consuming.
+   *
+   * Idempotent with respect to the connection: calling it before the broker is
+   * connected is normal, and the handler is re-attached after a reconnection.
+   */
+  consume(queue: string, handler: DeliveryHandler): Promise<void>;
+}
+
+export const BROKER_CONSUME = Symbol('BrokerConsumePort');
+
 export interface BrokerHealthPort {
   /**
    * Whether the broker connection is up right now.

@@ -6,18 +6,14 @@ import type { Channel, ConsumeMessage } from 'amqplib';
 import type { AppConfig } from '../config/app-config.js';
 import { APP_CONFIG } from '../config/config.module.js';
 import type {
+  BrokerConsumePort,
   BrokerHealthPort,
   BrokerPort,
+  DeliveryHandler,
   DeliveryVerdict,
   PublishRequest,
 } from './contracts/index.js';
 import { buildTopology } from './topology.js';
-
-/** A handler the broker drives; its verdict decides ack or reject. */
-export type DeliveryHandler = (
-  payload: unknown,
-  message: ConsumeMessage,
-) => Promise<DeliveryVerdict>;
 
 /**
  * Long enough for a container to finish starting, short enough that a
@@ -58,7 +54,7 @@ const RECONNECT_SECONDS = 2;
  */
 @Injectable()
 export class AmqpBroker
-  implements BrokerPort, BrokerHealthPort, OnModuleInit, OnApplicationShutdown
+  implements BrokerPort, BrokerConsumePort, BrokerHealthPort, OnModuleInit, OnApplicationShutdown
 {
   private readonly logger = new Logger(AmqpBroker.name);
   private connection: AmqpConnectionManager | undefined;
