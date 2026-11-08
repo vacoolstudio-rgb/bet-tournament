@@ -75,12 +75,32 @@ export class AmqpBroker
     });
     this.connection = connection;
 
+    // Losing the connection is an event, not an error: the manager reconnects
+    // on its own. Saying so in the log is the difference between "the service
+    // was down for two minutes" and "the broker was".
+    connection.on('disconnect', ({ err }) => {
+      this.logger.warn(`Broker connection lost, reconnecting: ${String(err)}`);
+    });
+    connection.on('connect', () => {
+      this.logger.log('Broker connection established, topology declared');
+    });
+
     // The setup function runs on every (re)connection, which is what makes the
     // topology self-healing: a broker that lost its definitions gets them back
     // without a redeploy, and so do the consumers.
-    this.channel = connection.createChannel({
+    const channel = connection.createChannel({
       json: false,
       setup: (channel: Channel) => this.declare(channel),
+    });
+    this.channel = channel;
+
+    // Without a listener here, a channel that dies mid-operation surfaces as
+    // an unhandled rejection — "Channel ended, no reply will be forthcoming"
+    // from whichever RPC was in flight — and Node's default for an unhandled
+    // rejection is to end the process. The connection recovers by itself; the
+    // process would not have been there to see it.
+    channel.on('error', (error: unknown) => {
+      this.logger.warn(`Channel error, the manager will re-establish it: ${String(error)}`);
     });
 
     await this.waitForConnection();
@@ -169,9 +189,33 @@ export class AmqpBroker
     message: ConsumeMessage,
     handler: DeliveryHandler,
   ): Promise<void> {
-    try {
-      const verdict = await handler(this.parse(message), message);
+    let verdict: DeliveryVerdict;
 
+    try {
+      verdict = await handler(this.parse(message), message);
+    } catch (error) {
+      // The handler is written not to throw; if it ever does, the message must
+      // not be silently dropped, and the delivery limit will eventually park
+      // it.
+      this.logger.error(`Handler threw for ${message.fields.routingKey}: ${String(error)}`);
+      verdict = 'retry';
+    }
+
+    this.respond(channel, message, verdict);
+  }
+
+  /**
+   * Settles the delivery on the channel, tolerating a channel that is no
+   * longer there.
+   *
+   * Acking a dead channel throws, and this runs detached from any awaiting
+   * caller, so the throw would become an unhandled rejection — which ends the
+   * process by default. There is also nothing useful to do about it: a
+   * delivery that was never acknowledged is already back in the queue, and the
+   * reconnected consumer will see it again.
+   */
+  private respond(channel: Channel, message: ConsumeMessage, verdict: DeliveryVerdict): void {
+    try {
       if (verdict === 'ack') {
         channel.ack(message);
       } else {
@@ -181,11 +225,10 @@ export class AmqpBroker
         channel.nack(message, false, false);
       }
     } catch (error) {
-      // The handler is written not to throw; if it ever does, the message must
-      // not be silently dropped, and the delivery limit will eventually park
-      // it.
-      this.logger.error(`Handler threw for ${message.fields.routingKey}: ${String(error)}`);
-      channel.nack(message, false, false);
+      this.logger.warn(
+        `Could not settle ${message.fields.routingKey} on a closed channel; ` +
+          `the broker will redeliver it: ${String(error)}`,
+      );
     }
   }
 
