@@ -275,6 +275,10 @@ describe('GET /leaderboard', () => {
   });
 });
 
+interface SchemaObject {
+  readonly properties?: Record<string, unknown>;
+}
+
 describe('the operational endpoints', () => {
   it('reports healthy while both dependencies are reachable', async () => {
     const { body } = await app.http.get('/health').expect(200);
@@ -319,5 +323,43 @@ describe('the operational endpoints', () => {
     expect(named('header')).toContain('X-Player-Id');
     // Both outcomes a client has to handle.
     expect(Object.keys(route.responses)).toEqual(expect.arrayContaining(['200', '400']));
+  });
+
+  it('documents every field it actually sends', async () => {
+    // The DTOs `implement` their contract interfaces, so a field added to the
+    // contract cannot be missing from the class — the compiler says so. What
+    // nothing says is whether the field carries `@ApiProperty`: without it the
+    // API serves the field and the published schema omits it, which is how
+    // `limit` came to be validated but undocumented. Only a real response
+    // compared against the real document catches that.
+    await seed([
+      { playerId: PLAYER_ID, points: '12.500000', lastScoredAt: '2026-11-10T00:00:00Z' },
+    ]);
+
+    const [{ body: document }, { body: response }] = await Promise.all([
+      app.http.get('/api/docs-json').expect(200),
+      app.http.get('/leaderboard').set('X-Player-Id', PLAYER_ID).expect(200),
+    ]);
+
+    const schemas = (document as { components: { schemas: Record<string, SchemaObject> } })
+      .components.schemas;
+    const documented = (component: string): string[] =>
+      Object.keys(schemas[component]?.properties ?? {});
+    const sent = (value: unknown): string[] =>
+      typeof value === 'object' && value !== null ? Object.keys(value) : [];
+
+    const board = response as {
+      tournament: unknown;
+      me: unknown;
+      top: readonly unknown[];
+    };
+
+    // Each level of the response against the component that describes it.
+    expect(documented('LeaderboardResponseDto')).toEqual(expect.arrayContaining(sent(board)));
+    expect(documented('TournamentInfoDto')).toEqual(expect.arrayContaining(sent(board.tournament)));
+    expect(documented('PlayerStandingDto')).toEqual(expect.arrayContaining(sent(board.me)));
+    expect(documented('LeaderboardEntryDto')).toEqual(expect.arrayContaining(sent(board.top[0])));
+    // And the board was not empty, or the row check above proved nothing.
+    expect(board.top).not.toHaveLength(0);
   });
 });
