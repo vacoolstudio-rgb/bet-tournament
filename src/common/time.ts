@@ -1,4 +1,4 @@
-import { notImplemented } from './not-implemented.error.js';
+import { PoisonMessageError } from './errors.js';
 
 /**
  * ISO-8601 instant with an explicit zone — `Z` or `±hh:mm`.
@@ -45,6 +45,14 @@ export function isIsoTimestamp(raw: unknown): boolean {
  * @throws PoisonMessageError with reason `invalid_schema` when the value is
  *         not an instant with a zone, or is not a real calendar date.
  */
-export function parseTimestamp(_field: string, _raw: string): Date {
-  return notImplemented('parseTimestamp');
+export function parseTimestamp(field: string, raw: string): Date {
+  if (!isIsoTimestamp(raw)) {
+    throw new PoisonMessageError(
+      'invalid_schema',
+      `Field "${field}" must be an ISO-8601 timestamp with an explicit timezone`,
+      { field, value: raw },
+    );
+  }
+
+  return new Date(raw);
 }

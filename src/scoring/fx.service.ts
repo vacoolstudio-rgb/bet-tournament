@@ -1,19 +1,29 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { Decimal } from 'decimal.js';
+import { Decimal } from 'decimal.js';
 import type { AppConfig } from '../config/app-config.js';
 import { APP_CONFIG } from '../config/config.module.js';
-import { notImplemented } from '../common/not-implemented.error.js';
+import { BASE_CURRENCY } from '../common/currency.js';
+import { UnknownCurrencyError } from '../common/errors.js';
+import { parseRate } from '../common/money.js';
 import type { ConvertToUsdInput, FxPort } from './scoring.contract.js';
 
 @Injectable()
 export class FxService implements FxPort {
   constructor(@Inject(APP_CONFIG) private readonly config: AppConfig) {}
 
-  rateFor(_currency: string): Decimal {
-    return notImplemented('FxService.rateFor', this.config);
+  rateFor(currency: string): Decimal {
+    // Checked before the config is consulted, not after: a stray USD entry
+    // would otherwise rescale every dollar bet in the tournament, and the
+    // schema's refusal to accept one is a safety net, not the rule.
+    if (currency === BASE_CURRENCY) return new Decimal(1);
+
+    const rate = this.config.fxRates[currency];
+    if (rate === undefined) throw new UnknownCurrencyError(currency);
+
+    return parseRate(currency, rate);
   }
 
-  toUsd(_input: ConvertToUsdInput): Decimal {
-    return notImplemented('FxService.toUsd', this.config);
+  toUsd({ amount, currency }: ConvertToUsdInput): Decimal {
+    return amount.mul(this.rateFor(currency));
   }
 }

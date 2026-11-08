@@ -1,14 +1,15 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import type { PipeTransform } from '@nestjs/common';
-import { NotImplementedError } from '../common/not-implemented.error.js';
+import { isUUID } from 'class-validator';
 
 /**
  * Validates the `X-Player-Id` header.
  *
- * Absent is allowed and yields undefined — the leaderboard is public and the
- * caller simply gets no `me` block. Present but not a UUID is a client error,
- * because silently ignoring a malformed id would answer "you have no points"
- * to a player who does.
+ * Absent — or present and blank, which is the same thing from a client's point
+ * of view — is allowed and yields undefined: the leaderboard is public and the
+ * caller simply gets no `me` block. Present but malformed is a client error,
+ * because silently ignoring it would answer "you have no points" to a player
+ * who has some.
  *
  * This is identification, not authentication: the header is trusted because
  * the task specifies it. In production the id comes from a verified token, and
@@ -16,7 +17,14 @@ import { NotImplementedError } from '../common/not-implemented.error.js';
  */
 @Injectable()
 export class PlayerIdPipe implements PipeTransform<string | undefined, string | undefined> {
-  transform(_value: string | undefined): string | undefined {
-    throw new NotImplementedError('PlayerIdPipe.transform');
+  transform(value: string | undefined): string | undefined {
+    const header = value?.trim();
+    if (header === undefined || header.length === 0) return undefined;
+
+    if (!isUUID(header)) {
+      throw new BadRequestException('X-Player-Id must be a UUID');
+    }
+
+    return header;
   }
 }

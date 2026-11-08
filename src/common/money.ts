@@ -1,5 +1,18 @@
 import { Decimal } from 'decimal.js';
-import { notImplemented } from './not-implemented.error.js';
+import { AmountOutOfRangeError } from './errors.js';
+
+/**
+ * decimal.js defaults to 20 significant digits, and that is not enough here:
+ * an amount carries up to 13 integer digits and 4 decimal places, a rate up to
+ * 8, so their product can need 25. At the default the tail is rounded away
+ * silently — and a rollback has to subtract exactly the number the settle
+ * credited, not a number that was nearly it.
+ *
+ * Set on the shared constructor rather than on a clone, because a clone's
+ * instances fail `instanceof Decimal` and this module's values travel through
+ * the whole domain.
+ */
+Decimal.set({ precision: 40 });
 
 /**
  * Money and points arithmetic. Every number that represents value passes
@@ -89,16 +102,33 @@ export function isFxRate(raw: unknown): boolean {
  *         decimal, carries more than {@link MONEY_SCALE} fraction digits, or
  *         exceeds {@link MAX_MONEY_AMOUNT}.
  */
-export function parseMoney(_field: string, _raw: string | number): Decimal {
-  return notImplemented('parseMoney');
+export function parseMoney(field: string, raw: string | number): Decimal {
+  if (!isMoneyAmount(raw)) {
+    throw new AmountOutOfRangeError(
+      field,
+      String(raw),
+      `is not a non-negative decimal with at most ${MONEY_SCALE} fraction digits ` +
+        `and at most ${MAX_MONEY_AMOUNT}`,
+    );
+  }
+
+  return new Decimal(typeof raw === 'number' ? String(raw) : raw.trim());
 }
 
 /**
  * Parses an FX rate from the config. Rates stay strings all the way from the
  * environment for the same reason amounts do.
  */
-export function parseRate(_currency: string, _raw: string): Decimal {
-  return notImplemented('parseRate');
+export function parseRate(currency: string, raw: string): Decimal {
+  if (!isFxRate(raw)) {
+    throw new AmountOutOfRangeError(
+      `fxRate[${currency}]`,
+      raw,
+      `is not a positive decimal no greater than ${MAX_FX_RATE}`,
+    );
+  }
+
+  return new Decimal(raw.trim());
 }
 
 /**
@@ -111,8 +141,20 @@ export function parseRate(_currency: string, _raw: string): Decimal {
  *
  * @throws AmountOutOfRangeError when the product exceeds {@link MAX_POINTS}.
  */
-export function toPoints(_winAmount: Decimal, _rate: Decimal): Decimal {
-  return notImplemented('toPoints');
+export function toPoints(winAmount: Decimal, rate: Decimal): Decimal {
+  // Truncated, not rounded: the stored number and the credited number have to
+  // be the same one, and rounding up would credit a micro-point nobody earned.
+  const points = winAmount.mul(rate).toDecimalPlaces(POINTS_SCALE, Decimal.ROUND_DOWN);
+
+  if (points.gt(MAX_POINTS)) {
+    throw new AmountOutOfRangeError(
+      'winAmount × fxRate',
+      points.toFixed(POINTS_SCALE),
+      `exceeds the largest value the points column can hold (${MAX_POINTS})`,
+    );
+  }
+
+  return points;
 }
 
 /**
@@ -121,11 +163,11 @@ export function toPoints(_winAmount: Decimal, _rate: Decimal): Decimal {
  * fully earned. Safe as a `number`: {@link MAX_POINTS} is far below
  * `Number.MAX_SAFE_INTEGER`.
  */
-export function floorPoints(_points: Decimal | string): number {
-  return notImplemented('floorPoints');
+export function floorPoints(points: Decimal | string): number {
+  return new Decimal(points).toDecimalPlaces(0, Decimal.ROUND_DOWN).toNumber();
 }
 
 /** Formats a decimal for a NUMERIC column at a fixed scale. */
-export function toColumn(_value: Decimal, _scale: number): string {
-  return notImplemented('toColumn');
+export function toColumn(value: Decimal, scale: number): string {
+  return value.toFixed(scale, Decimal.ROUND_DOWN);
 }

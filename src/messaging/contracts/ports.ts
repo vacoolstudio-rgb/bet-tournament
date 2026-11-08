@@ -58,3 +58,17 @@ export interface ParkingPort {
 }
 
 export const PARKING_PUBLISHER = Symbol('ParkingPort');
+
+export interface BrokerHealthPort {
+  /**
+   * Whether the broker connection is up right now.
+   *
+   * Exists so the health check does not have to know what a broker is. The
+   * connection manager reconnects on its own, so a `false` here is a statement
+   * about this instant — which is what readiness should report, because while
+   * it holds, events are piling up in the queue unhandled.
+   */
+  isConnected(): boolean;
+}
+
+export const BROKER_HEALTH = Symbol('BrokerHealthPort');

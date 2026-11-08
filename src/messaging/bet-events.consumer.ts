@@ -1,7 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Nack, RabbitSubscribe } from '@golevelup/nestjs-rabbitmq';
 import type { ConsumeMessage } from 'amqplib';
-import { notImplemented } from '../common/not-implemented.error.js';
 import { BET_EVENT_PROCESSOR, OUTCOME_CLASSIFIER, PARKING_PUBLISHER } from './contracts/index.js';
 import type {
   BetEventProcessorPort,
@@ -10,6 +9,7 @@ import type {
 } from './contracts/index.js';
 import { METRICS } from '../observability/metrics.contract.js';
 import type { MetricsPort } from '../observability/metrics.contract.js';
+import { attemptFromHeaders } from './delivery-attempts.js';
 import {
   EXCHANGE_BETS,
   QUEUE_BETS,
@@ -52,14 +52,51 @@ export class BetEventsConsumer {
     // handling it with a reason instead of an unhandled parser error.
     allowNonJsonMessages: true,
   })
-  handle(_payload: unknown, _message: ConsumeMessage): Promise<Nack | undefined> {
-    return notImplemented(
-      'BetEventsConsumer.handle',
-      this.logger,
-      this.processor,
-      this.classifier,
-      this.parking,
-      this.metrics,
-    );
+  async handle(payload: unknown, message: ConsumeMessage): Promise<Nack | undefined> {
+    const startedAt = performance.now();
+    const attempt = attemptFromHeaders(message.properties.headers);
+    const routingKey = message.fields.routingKey;
+
+    try {
+      const reason = await this.processor.process({ routingKey, payload });
+      this.metrics.recordAck(reason);
+
+      return undefined;
+    } catch (error) {
+      const outcome = this.classifier.classify({ error, attempt });
+
+      if (outcome.kind === 'retry') {
+        this.metrics.recordRetry(outcome.attempt);
+        this.logger.warn(
+          `Retrying ${routingKey} after attempt ${outcome.attempt}: ${outcome.error.message}`,
+        );
+
+        // Not a requeue: the dead-letter route is the TTL hop, and requeueing
+        // in place would redeliver instantly and burn every attempt in
+        // milliseconds.
+        return new Nack(false);
+      }
+
+      try {
+        await this.parking.park({ message, outcome });
+        this.metrics.recordPark(outcome.reason);
+        this.logger.error(
+          `Parked ${routingKey} after ${outcome.attempts} attempt(s) ` +
+            `(${outcome.reason}): ${outcome.error.message}`,
+        );
+
+        return undefined;
+      } catch (parkError) {
+        // Acknowledging now would drop the payload on the floor. Nacked, it
+        // goes round the retry hop and the delivery limit eventually parks it.
+        this.logger.error(
+          `Could not park ${routingKey}, leaving it to the broker: ${String(parkError)}`,
+        );
+
+        return new Nack(false);
+      }
+    } finally {
+      this.metrics.observeProcessing((performance.now() - startedAt) / 1000);
+    }
   }
 }

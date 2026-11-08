@@ -5,7 +5,13 @@ import { APP_CONFIG } from '../config/config.module.js';
 import { ScoringModule } from '../scoring/scoring.module.js';
 import { BetEventProcessor } from './bet-event.processor.js';
 import { BetEventsConsumer } from './bet-events.consumer.js';
-import { BET_EVENT_PROCESSOR, OUTCOME_CLASSIFIER, PARKING_PUBLISHER } from './contracts/index.js';
+import { BrokerHealth } from './broker-health.js';
+import {
+  BET_EVENT_PROCESSOR,
+  BROKER_HEALTH,
+  OUTCOME_CLASSIFIER,
+  PARKING_PUBLISHER,
+} from './contracts/index.js';
 import { OutcomeClassifier } from './outcome.classifier.js';
 import { ParkingPublisher } from './parking.publisher.js';
 import { buildTopology } from './topology.js';
@@ -46,8 +52,9 @@ import { buildTopology } from './topology.js';
     { provide: BET_EVENT_PROCESSOR, useClass: BetEventProcessor },
     { provide: OUTCOME_CLASSIFIER, useClass: OutcomeClassifier },
     { provide: PARKING_PUBLISHER, useClass: ParkingPublisher },
+    { provide: BROKER_HEALTH, useClass: BrokerHealth },
     BetEventsConsumer,
   ],
-  exports: [BET_EVENT_PROCESSOR, OUTCOME_CLASSIFIER, PARKING_PUBLISHER],
+  exports: [BET_EVENT_PROCESSOR, OUTCOME_CLASSIFIER, PARKING_PUBLISHER, BROKER_HEALTH],
 })
 export class MessagingModule {}

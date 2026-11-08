@@ -1,7 +1,6 @@
 import { Controller, Get, Header, Inject, Res } from '@nestjs/common';
 import { ApiExcludeEndpoint } from '@nestjs/swagger';
 import type { Response } from 'express';
-import { notImplemented } from '../common/not-implemented.error.js';
 import { METRICS } from './metrics.contract.js';
 import type { MetricsPort } from './metrics.contract.js';
 
@@ -23,7 +22,10 @@ export class MetricsController {
   @Get()
   @ApiExcludeEndpoint()
   @Header('Cache-Control', 'no-store')
-  scrape(@Res({ passthrough: true }) _response: Response): Promise<string> {
-    return notImplemented('MetricsController.scrape', this.metrics);
+  async scrape(@Res({ passthrough: true }) response: Response): Promise<string> {
+    const snapshot = await this.metrics.render();
+    response.setHeader('Content-Type', snapshot.contentType);
+
+    return snapshot.body;
   }
 }

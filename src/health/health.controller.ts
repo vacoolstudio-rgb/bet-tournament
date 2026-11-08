@@ -1,16 +1,29 @@
-import { Controller, Get } from '@nestjs/common';
-import { HealthCheck } from '@nestjs/terminus';
-import type { HealthCheckResult } from '@nestjs/terminus';
+import { Controller, Get, Inject } from '@nestjs/common';
+import {
+  HealthCheck,
+  HealthCheckService,
+  HealthIndicatorService,
+  TypeOrmHealthIndicator,
+} from '@nestjs/terminus';
+import type { HealthCheckResult, HealthIndicatorResult } from '@nestjs/terminus';
 import { ApiOkResponse, ApiServiceUnavailableResponse, ApiTags } from '@nestjs/swagger';
-import { NotImplementedError } from '../common/not-implemented.error.js';
+import { BROKER_HEALTH } from '../messaging/contracts/index.js';
+import type { BrokerHealthPort } from '../messaging/contracts/index.js';
 
 @ApiTags('ops')
 @Controller('health')
 export class HealthController {
+  constructor(
+    private readonly health: HealthCheckService,
+    private readonly database: TypeOrmHealthIndicator,
+    private readonly indicators: HealthIndicatorService,
+    @Inject(BROKER_HEALTH) private readonly broker: BrokerHealthPort,
+  ) {}
+
   /**
    * Readiness, not liveness: the service is only useful when it can both read
    * the database and reach the broker, so both are checked and a failure is a
-   * 503 rather than a cheerful 200 with an empty leaderboard.
+   * 503 rather than a cheerful 200 over an empty leaderboard.
    */
   @Get()
   @HealthCheck()
@@ -21,6 +34,17 @@ export class HealthController {
       '`{ status, info, error, details }` shape.',
   })
   check(): Promise<HealthCheckResult> {
-    throw new NotImplementedError('HealthController.check');
+    return this.health.check([
+      () => this.database.pingCheck('database', { timeout: 2_000 }),
+      () => this.brokerCheck(),
+    ]);
+  }
+
+  private brokerCheck(): HealthIndicatorResult {
+    const indicator = this.indicators.check('broker');
+
+    return this.broker.isConnected()
+      ? indicator.up()
+      : indicator.down({ message: 'AMQP connection is not established' });
   }
 }
