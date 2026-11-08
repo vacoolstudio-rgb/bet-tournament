@@ -26,6 +26,18 @@ export interface MetricsPort {
   render(): Promise<MetricsSnapshot>;
 }
 
+/**
+ * Metric names, fixed here rather than inline in the service: a dashboard and
+ * an alert outlive the code that emits them, and renaming one silently is how
+ * a graph goes flat while everything looks fine.
+ */
+export const METRIC_NAMES = {
+  acknowledged: 'bet_events_acknowledged_total',
+  retried: 'bet_events_retried_total',
+  parked: 'bet_events_parked_total',
+  processing: 'bet_event_processing_seconds',
+} as const;
+
 export interface MetricsSnapshot {
   /** e.g. `text/plain; version=0.0.4; charset=utf-8` — Prometheus is picky. */
   readonly contentType: string;

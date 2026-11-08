@@ -41,6 +41,10 @@ export default tseslint.config(
       '@typescript-eslint/no-unsafe-assignment': 'off',
       '@typescript-eslint/no-unsafe-member-access': 'off',
       '@typescript-eslint/no-unsafe-argument': 'off',
+      // `expect(fake.method).toHaveBeenCalled()` passes a method reference by
+      // design; the rule's advice to bind it would make every assertion noisy
+      // for a `this` that no mock uses.
+      '@typescript-eslint/unbound-method': 'off',
     },
   },
 );
