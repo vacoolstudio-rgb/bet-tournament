@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Decimal } from 'decimal.js';
 import { MONEY_SCALE, POINTS_SCALE, RATE_SCALE, toColumn, toPoints } from '../common/money.js';
 import {
@@ -24,6 +24,8 @@ import type {
 
 @Injectable()
 export class ScoringService implements ScoringPort {
+  private readonly logger = new Logger(ScoringService.name);
+
   constructor(
     @Inject(UNIT_OF_WORK) private readonly unitOfWork: UnitOfWorkPort,
     @Inject(BETS_REPOSITORY) private readonly bets: BetsRepositoryPort,
@@ -49,6 +51,20 @@ export class ScoringService implements ScoringPort {
     // message: resolving the rate first would park it and invent manual work
     // out of nothing.
     if (!this.tournament.isWithinWindow(command.settledAt)) {
+      const { code, startsAt, endsAt } = this.tournament.getActive();
+
+      // Said out loud, because the alternative is a silent acknowledgement:
+      // nothing in the journal, nothing in the log, and the only trace in
+      // /metrics. Someone sending a bet by hand with today's date against a
+      // window configured for another month sees "nothing happened" and has no
+      // way to tell why. The line carries both dates so the mismatch is the
+      // first thing read.
+      this.logger.log(
+        `Bet ${command.betId} settled at ${command.settledAt.toISOString()} is outside ` +
+          `tournament "${code}" (${startsAt.toISOString()} .. ${endsAt.toISOString()}), ` +
+          `so it scores nothing`,
+      );
+
       return { status: 'out_of_window' };
     }
 

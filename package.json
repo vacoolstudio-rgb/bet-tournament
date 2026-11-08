@@ -26,7 +26,8 @@
     "test:cov": "vitest run --coverage",
     "test:integration": "vitest run --config vitest.config.integration.mts",
     "test:all": "npm run test && npm run test:integration",
-    "verify": "npm run typecheck && npm run lint && npm run format:check && npm run test"
+    "verify": "npm run typecheck && npm run lint && npm run format:check && npm run test",
+    "replay": "node --env-file-if-exists=.env --import tsx tools/replay.ts"
   },
   "dependencies": {
     "@nestjs/common": "^12.4.0",

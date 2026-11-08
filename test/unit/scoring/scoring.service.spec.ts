@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { Decimal } from 'decimal.js';
 import { UnknownCurrencyError } from '../../../src/common/errors.js';
 import { ScoringService } from '../../../src/scoring/scoring.service.js';
@@ -130,6 +131,29 @@ describe('ScoringService.settle', () => {
     expect(unitOfWork.withTransaction).not.toHaveBeenCalled();
     expect(bets.insertSettled).not.toHaveBeenCalled();
     expect(scores.credit).not.toHaveBeenCalled();
+  });
+
+  it('says in the log why an out-of-window bet scored nothing', async () => {
+    // Otherwise the only trace is a counter in /metrics, and someone sending a
+    // bet by hand against a window configured for another month sees nothing
+    // at all and cannot tell why.
+    const logged = vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    const { service } = subject({
+      tournament: fakeTournament({ isWithinWindow: vi.fn(() => false) }),
+    });
+
+    try {
+      await service.settle(settleCommand());
+
+      const line = String(logged.mock.calls[0]?.[0] ?? '');
+      expect(line).toContain(BET_ID);
+      // Both dates, because the mismatch between them is the answer.
+      expect(line).toContain('2026-11-15T10:00:00.000Z');
+      expect(line).toContain(ACTIVE_TOURNAMENT.startsAt.toISOString());
+      expect(line).toContain(ACTIVE_TOURNAMENT.endsAt.toISOString());
+    } finally {
+      logged.mockRestore();
+    }
   });
 
   it('checks the window before the rate, so an out-of-window bet is never parked', async () => {

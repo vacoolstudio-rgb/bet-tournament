@@ -20,6 +20,7 @@ npm ci
 npm run db:migrate                     # db:revert и db:show тоже есть
 npm run build && npm start
 npm run produce -- --list              # сценарии для прогона событий вручную
+npm run replay -- --dry-run            # что лежит в парковке; без --dry-run вернёт обратно
 ```
 
 `npm run start:dev` собирает в watch-режиме и перезапускает `dist`. **Через

@@ -44,7 +44,16 @@ services:
 
   rabbitmq:
     image: rabbitmq:4-management-alpine
+    # The node name decides which directory inside the volume the broker reads,
+    # and it is derived from the hostname. Left to Docker, every recreated
+    # container starts as a brand-new empty node and abandons the previous
+    # one's data — durable queues, persistent messages and all. Found the hard
+    # way: a parked message vanished across `up --force-recreate`, and the
+    # volume held four orphaned `rabbit@<container id>` directories, one per
+    # recreation.
+    hostname: rabbitmq
     environment:
+      RABBITMQ_NODENAME: rabbit@rabbitmq
       RABBITMQ_DEFAULT_USER: tournament
       RABBITMQ_DEFAULT_PASS: tournament
     ports:
