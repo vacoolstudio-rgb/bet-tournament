@@ -93,8 +93,10 @@ export class AmqpBroker
     // Without a listener here, a channel that dies mid-operation surfaces as
     // an unhandled rejection — "Channel ended, no reply will be forthcoming"
     // from whichever RPC was in flight — and Node's default for an unhandled
-    // rejection is to end the process. The connection recovers by itself; the
-    // process would not have been there to see it.
+    // Logged, not load-bearing: `amqp-connection-manager` handles the
+    // channel's own error event, so this does not keep the process alive —
+    // measured, by removing it. Without it a channel-level error is simply
+    // invisible. What keeps the process alive is the try/catch in `respond`.
     channel.on('error', (error: unknown) => {
       this.logger.warn(`Channel error, the manager will re-establish it: ${String(error)}`);
     });
@@ -219,6 +221,17 @@ export class AmqpBroker
    * process by default. There is also nothing useful to do about it: a
    * delivery that was never acknowledged is already back in the queue, and the
    * reconnected consumer will see it again.
+   */
+  /**
+   * Tells the broker what became of a delivery, tolerating a dead channel.
+   *
+   * Not defensive programming for its own sake. amqplib replaces a closed
+   * channel's `sendImmediately` with a function that throws
+   * `IllegalOperationError('Channel closed')`, and handling runs detached, so
+   * the throw would be an unhandled rejection — which ends the process by
+   * default. A connection severed while a handler was working is exactly how
+   * that happens, and there is nothing to do about the error anyway: the
+   * unacknowledged delivery is already back in the queue.
    */
   private respond(channel: Channel, message: ConsumeMessage, verdict: DeliveryVerdict): void {
     try {

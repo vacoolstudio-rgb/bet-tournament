@@ -1,7 +1,13 @@
 import { AmqpBroker } from '../../src/messaging/amqp-broker.js';
-import { EXCHANGE_BETS, QUEUE_BETS, ROUTING_KEY_SETTLED } from '../../src/messaging/topology.js';
+import {
+  EXCHANGE_BETS,
+  QUEUE_BETS,
+  QUEUE_PARKED,
+  QUEUE_RETRY,
+  ROUTING_KEY_SETTLED,
+} from '../../src/messaging/topology.js';
 import { resetBroker, testConfig } from './support/app.js';
-import { unacknowledged } from './support/broker.js';
+import { killConnection, listConnections, unacknowledged } from './support/broker.js';
 import type { Broker } from './support/broker.js';
 import { settledEvent } from '../support/builders.js';
 import { inject } from 'vitest';
@@ -31,10 +37,21 @@ let release: (() => void) | undefined;
 beforeAll(async () => {
   managementUrl = inject('managementUrl');
   broker = await resetBroker();
+}, 180_000);
 
-  amqp = new AmqpBroker(testConfig());
-  await amqp.onModuleInit();
-  await amqp.consume(QUEUE_BETS, async () => {
+/**
+ * A fresh consumer per test, holding whatever it is given until released.
+ *
+ * Per test rather than per file on purpose: these tests sever connections and
+ * abandon deliveries, so one leaving its broker reconnected and a message
+ * requeued would decide what the next one observes. The first version of this
+ * file shared one consumer and the third test failed for reasons that had
+ * nothing to do with it.
+ */
+async function startConsumer(): Promise<AmqpBroker> {
+  const started = new AmqpBroker(testConfig());
+  await started.onModuleInit();
+  await started.consume(QUEUE_BETS, async () => {
     // Stands in for the transaction: the delivery must stay unacknowledged
     // for as long as this is running.
     await new Promise<void>((resolve) => {
@@ -43,11 +60,24 @@ beforeAll(async () => {
 
     return 'ack' as const;
   });
-}, 180_000);
+
+  return started;
+}
+
+beforeEach(async () => {
+  release = undefined;
+  await broker.purge(QUEUE_BETS, QUEUE_RETRY, QUEUE_PARKED);
+  amqp = await startConsumer();
+}, 120_000);
+
+afterEach(async () => {
+  release?.();
+  release = undefined;
+  await amqp?.onApplicationShutdown();
+  await broker.purge(QUEUE_BETS, QUEUE_RETRY, QUEUE_PARKED);
+}, 120_000);
 
 afterAll(async () => {
-  release?.();
-  await amqp?.onApplicationShutdown();
   await broker?.close();
 });
 
@@ -82,6 +112,54 @@ describe('a delivery being handled', () => {
 
     await until(pending, 0, 'the delivery should be acknowledged once the handler returns');
   });
+
+  it('survives the channel dying under a handler that is still working', async () => {
+    // The original bug, made deterministic. A handler is in flight when the
+    // connection is severed; by the time it returns, the channel it was handed
+    // is dead, and amqplib's reaction to a send on a dead channel is not a
+    // quiet no-op — it swaps `sendImmediately` for a function that throws
+    // `IllegalOperationError('Channel closed')`. Thrown out of a detached
+    // `void this.settle(...)`, that is an unhandled rejection, and Node's
+    // default for one is to end the process. The service survived the outage
+    // logically, answered 503 honestly, and did not live to reconnect.
+    //
+    // It took a CI run to find the first time, because the window is narrow:
+    // handling is sub-millisecond, so a cut lands between deliveries rather
+    // than inside one. Here the handler is held open on purpose, which is the
+    // difference between reproducing this and hoping for it.
+    const unhandled: unknown[] = [];
+    const record = (reason: unknown): void => void unhandled.push(reason);
+    process.on('unhandledRejection', record);
+
+    try {
+      broker.publish(EXCHANGE_BETS, ROUTING_KEY_SETTLED, settledEvent());
+      await until(() => unacknowledged(managementUrl, QUEUE_BETS), 1, 'a delivery in flight');
+
+      // Severed while the handler holds it.
+      const connections = await listConnections(managementUrl);
+      const ours = connections.filter(
+        (connection) => connection.client_properties?.connection_name === 'bet-tournament',
+      );
+      expect(ours.length, 'nothing was severed, so nothing is proved').toBeGreaterThan(0);
+      for (const connection of ours) await killConnection(managementUrl, connection.name);
+
+      // Now let it finish. The ack it attempts goes to a channel that no
+      // longer exists.
+      release?.();
+      release = undefined;
+
+      // Long enough for the rejection to surface if it is going to.
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+    } finally {
+      process.off('unhandledRejection', record);
+    }
+
+    expect(unhandled.map(String)).toEqual([]);
+
+    // And the event is not lost: unacknowledged when the channel died, it is
+    // back in the queue waiting to be handled again.
+    await until(() => broker.depth(QUEUE_BETS), 1, 'the event should be back in the queue');
+  }, 120_000);
 
   it('comes back to the queue if the consumer goes away mid-handling', async () => {
     // The other half of the invariant: an unacknowledged delivery is not lost

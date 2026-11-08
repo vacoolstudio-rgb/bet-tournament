@@ -7,6 +7,10 @@ import { deleteQueue, killConnection, listConnections, queueExists } from './sup
 import type { Broker } from './support/broker.js';
 import { PLAYER_ID, settledEvent } from '../support/builders.js';
 
+/** Distinct bet ids, so 120 events are 120 bets rather than one retried. */
+const betIdFor = (index: number): string =>
+  `cc000000-0000-4000-8000-${String(index).padStart(12, '0')}`;
+
 /**
  * What happens when the connection goes away underneath a running service.
  *
@@ -167,4 +171,46 @@ describe('when the broker closes the connection', () => {
     );
     expect(row?.bets_counted).toBe(1);
   }, 90_000);
+
+  it('leaves no promise unhandled when cut mid-flight, repeatedly', async () => {
+    // The hazard this covers was found by accident, in CI, once: a severed
+    // connection rejects whatever RPC was in flight — an ack, a parking
+    // publish — and an unhandled rejection in Node ends the process by
+    // default. The service survived the outage logically, answered 503
+    // honestly, and did not live to reconnect.
+    //
+    // The test above can only hit that by luck: one message, one cut. Here the
+    // queue is kept busy so that acks are genuinely in flight, and the cut
+    // happens three times during the stream. Vitest fails a run on an
+    // unhandled rejection by itself, which is how the bug surfaced — the
+    // listener is here so the failure names the invariant instead of arriving
+    // as an unexplained "Unhandled Errors" section.
+    const unhandled: unknown[] = [];
+    const record = (reason: unknown): void => void unhandled.push(reason);
+    process.on('unhandledRejection', record);
+
+    try {
+      const count = 120;
+      for (let index = 0; index < count; index += 1) {
+        broker.publish(
+          EXCHANGE_BETS,
+          ROUTING_KEY_SETTLED,
+          settledEvent({ betId: betIdFor(index), winAmount: '1.0000', currency: 'USD' }),
+        );
+      }
+
+      for (let cut = 0; cut < 3; cut += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(await severService()).toBeGreaterThan(0);
+      }
+
+      // Every bet scored exactly once, which is the proof that the service
+      // reconnected and that nothing was acked into the void.
+      await expect.poll(points, { timeout: 60_000 }).toBe('120.000000');
+    } finally {
+      process.off('unhandledRejection', record);
+    }
+
+    expect(unhandled.map(String)).toEqual([]);
+  }, 180_000);
 });
