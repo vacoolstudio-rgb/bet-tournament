@@ -115,6 +115,59 @@ export async function connectBroker(url: string): Promise<Broker> {
   };
 }
 
+/**
+ * The management API, used for the things AMQP itself cannot express: reading
+ * back what a queue was really declared with, and severing a connection from
+ * the broker's side to see whether the service comes back.
+ */
+function management(managementUrl: string, path: string, method = 'GET'): Promise<Response> {
+  return fetch(`${managementUrl}/api/${path}`, {
+    method,
+    headers: { authorization: `Basic ${Buffer.from('guest:guest').toString('base64')}` },
+  });
+}
+
+interface BrokerConnection {
+  readonly name: string;
+  readonly client_properties?: { readonly connection_name?: string } | undefined;
+}
+
+/** Connections the broker currently holds, with whatever names they gave. */
+export async function listConnections(managementUrl: string): Promise<BrokerConnection[]> {
+  const response = await management(managementUrl, 'connections');
+  if (!response.ok) throw new Error(`management API said ${response.status} for connections`);
+
+  return (await response.json()) as BrokerConnection[];
+}
+
+/**
+ * Closes a connection from the broker's side.
+ *
+ * This is what a network partition or a broker restart looks like to a client,
+ * minus the wait: the socket goes away without a protocol-level goodbye.
+ */
+export async function killConnection(managementUrl: string, name: string): Promise<void> {
+  const response = await management(
+    managementUrl,
+    `connections/${encodeURIComponent(name)}`,
+    'DELETE',
+  );
+  if (!response.ok && response.status !== 404) {
+    throw new Error(`management API said ${response.status} closing ${name}`);
+  }
+}
+
+export async function deleteQueue(managementUrl: string, queue: string): Promise<void> {
+  const response = await management(managementUrl, `queues/%2F/${queue}`, 'DELETE');
+  if (!response.ok && response.status !== 404) {
+    throw new Error(`management API said ${response.status} deleting ${queue}`);
+  }
+}
+
+export async function queueExists(managementUrl: string, queue: string): Promise<boolean> {
+  return (await management(managementUrl, `queues/%2F/${queue}`)).ok;
+}
+
 /** Reads a queue's declared arguments back from the management API. */
 export async function queueArguments(
   managementUrl: string,

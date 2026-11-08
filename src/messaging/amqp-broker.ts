@@ -26,6 +26,24 @@ export type DeliveryHandler = (
 const CONNECT_TIMEOUT_MS = 20_000;
 
 /**
+ * How the connection shows up in the broker's own listings.
+ *
+ * Unnamed connections are a row of ports in the management UI, and the first
+ * question during an incident is which of them belongs to this service.
+ */
+const CONNECTION_NAME = 'bet-tournament';
+
+/**
+ * Heartbeats detect a peer that went away without closing the socket — a
+ * container killed, a network partition — in roughly two intervals. The
+ * reconnect delay is set apart from it rather than inherited: the library
+ * defaults to the heartbeat interval, which couples "how fast we notice" to
+ * "how long we wait", and those are different questions.
+ */
+const HEARTBEAT_SECONDS = 10;
+const RECONNECT_SECONDS = 2;
+
+/**
  * The AMQP layer, owned rather than borrowed.
  *
  * `@golevelup/nestjs-rabbitmq` would have supplied this and its peer range
@@ -50,7 +68,11 @@ export class AmqpBroker
   constructor(@Inject(APP_CONFIG) private readonly config: AppConfig) {}
 
   async onModuleInit(): Promise<void> {
-    const connection = amqp.connect([this.config.rabbit.url]);
+    const connection = amqp.connect([this.config.rabbit.url], {
+      heartbeatIntervalInSeconds: HEARTBEAT_SECONDS,
+      reconnectTimeInSeconds: RECONNECT_SECONDS,
+      connectionOptions: { clientProperties: { connection_name: CONNECTION_NAME } },
+    });
     this.connection = connection;
 
     // The setup function runs on every (re)connection, which is what makes the
