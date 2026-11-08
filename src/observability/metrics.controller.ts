@@ -1,5 +1,7 @@
-import { Controller, Get, Header, Inject } from '@nestjs/common';
+import { Controller, Get, Header, Inject, Res } from '@nestjs/common';
 import { ApiExcludeEndpoint } from '@nestjs/swagger';
+import type { Response } from 'express';
+import { notImplemented } from '../common/not-implemented.error.js';
 import { METRICS } from './metrics.contract.js';
 import type { MetricsPort } from './metrics.contract.js';
 
@@ -12,16 +14,16 @@ export class MetricsController {
    * scraper that already knows the format, and the exposition text would only
    * clutter the API docs.
    *
-   * The content type is set from the registry's own value rather than
-   * hardcoded — Prometheus rejects a response whose version it does not
-   * recognise.
+   * Takes the response object because the content type has to come from the
+   * registry rather than a literal — Prometheus refuses a body whose declared
+   * version it does not recognise, and Express would otherwise label a
+   * returned string as `text/html`. `passthrough` keeps the handler returning
+   * a value instead of writing the response by hand.
    */
   @Get()
   @ApiExcludeEndpoint()
   @Header('Cache-Control', 'no-store')
-  async scrape(): Promise<string> {
-    const snapshot = await this.metrics.render();
-
-    return snapshot.body;
+  scrape(@Res({ passthrough: true }) _response: Response): Promise<string> {
+    return notImplemented('MetricsController.scrape', this.metrics);
   }
 }

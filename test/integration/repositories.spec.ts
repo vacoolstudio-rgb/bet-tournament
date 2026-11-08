@@ -351,6 +351,32 @@ describe('concurrency', () => {
   });
 });
 
+describe('more than one tournament', () => {
+  it('voids a bet only within the tournament it is asked about', async () => {
+    // A documented limitation, pinned so it stays deliberate. Rollbacks are
+    // addressed by (active tournament, betId), so a rollback that arrives
+    // after the tournament it belongs to has ended writes a tombstone in the
+    // current one and leaves the finished tournament's points standing. With a
+    // single active tournament this is unreachable; with two it would need the
+    // event to name its tournament, which the task's schema does not.
+    const past = await tournaments.upsertByCode({
+      code: 'oct-2026',
+      startsAt: new Date('2026-10-01T00:00:00.000Z'),
+      endsAt: new Date('2026-11-01T00:00:00.000Z'),
+    });
+    await inTransaction((scope) =>
+      bets.insertSettled({ scope, bet: settledRow({ tournamentId: past.id }) }),
+    );
+
+    const voided = await inTransaction((scope) =>
+      bets.markRolledBack({ scope, tournamentId, betId: BET_ID }),
+    );
+
+    expect(voided).toBeNull();
+    expect((await bets.findOne({ tournamentId: past.id, betId: BET_ID }))?.status).toBe('settled');
+  });
+});
+
 describe('PlayerScoresRepository.credit', () => {
   const settledAt = SETTLED_AT;
 
@@ -530,6 +556,24 @@ describe('PlayerScoresRepository.debit', () => {
     ).rejects.toThrow(/player_scores_points_non_negative/);
   });
 
+  it('refuses to debit a player who has no aggregate row', async () => {
+    // Unreachable through the service: a bet can only be voided after it was
+    // credited, which creates the row. If it ever happens, the journal and the
+    // aggregate have drifted, and a silent no-op would keep points that no bet
+    // accounts for.
+    await expect(
+      inTransaction((scope) =>
+        scores.debit({
+          scope,
+          tournamentId,
+          playerId: '12121212-1212-4121-8121-121212121212',
+          points: '1.000000',
+          lastScoredAt: null,
+        }),
+      ),
+    ).rejects.toThrow();
+  });
+
   it('drops only the tally when a losing bet is voided', async () => {
     await inTransaction((scope) =>
       scores.decrementCounted({ scope, tournamentId, playerId: PLAYER_ID }),
@@ -619,6 +663,21 @@ describe('PlayerScoresRepository.top and rankOf', () => {
     const ranks = await Promise.all(top.map((row) => scores.rankOf({ tournamentId, row })));
 
     expect(ranks).toEqual([1, 2, 3]);
+  });
+
+  it('ranks a complete tie by player id, exactly as the top does', async () => {
+    // Exercises the last branch of the ranking predicate. If the two
+    // orderings disagree here, a player sees a position that contradicts the
+    // row they are standing on.
+    await seed([
+      { playerId: player(2), points: '50.000000', settledAt: at(10) },
+      { playerId: player(1), points: '50.000000', settledAt: at(10) },
+    ]);
+    const first = await scores.findOne({ tournamentId, playerId: player(1) });
+    const second = await scores.findOne({ tournamentId, playerId: player(2) });
+
+    expect(await scores.rankOf({ tournamentId, row: first! })).toBe(1);
+    expect(await scores.rankOf({ tournamentId, row: second! })).toBe(2);
   });
 
   it('counts only the players strictly above a row', async () => {

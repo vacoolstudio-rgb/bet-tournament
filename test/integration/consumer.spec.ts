@@ -111,6 +111,9 @@ describe('scoring settled bets', () => {
 
     await awaitPoints('48.932000');
     expect((await score())?.bets_counted).toBe(3);
+    // Acknowledged, not merely processed: a message left unacked comes back on
+    // the next connection and the totals would drift upwards on every restart.
+    expect(await broker.depth(QUEUE_BETS)).toBe(0);
   });
 
   it('scores a redelivered event once', async () => {
@@ -236,12 +239,19 @@ describe('messages that can never succeed', () => {
   });
 
   it('parks a malformed body on sight, with no retry hops', async () => {
-    broker.publish(EXCHANGE_BETS, ROUTING_KEY_SETTLED, Buffer.from('{not json'));
+    const body = Buffer.from('{not json');
+    broker.publish(EXCHANGE_BETS, ROUTING_KEY_SETTLED, body);
 
-    const headers = await parked();
+    const message = await broker.take(QUEUE_PARKED, 10_000);
+    broker.ack(message);
+    const headers = message.properties.headers ?? {};
+
     expect(headers[HEADER_PARK_REASON]).toBe('invalid_schema');
     // Attempt 1: retrying a broken payload only wastes deliveries.
     expect(headers[HEADER_PARK_ATTEMPTS]).toBe(1);
+    // Byte for byte: whoever opens the parking queue needs the payload that
+    // failed, not a re-serialised approximation of it.
+    expect(message.content.equals(body)).toBe(true);
   });
 
   it('parks a payload that fails validation', async () => {
@@ -302,11 +312,13 @@ describe('when the database is unavailable', () => {
 });
 
 describe('from the queue to the endpoint', () => {
-  it('shows a scored bet on the leaderboard', async () => {
-    // The only test that closes the loop. Every other suite works on one side
-    // of the table — this one proves the writer and the reader agree about it.
-    settle(settledEvent({ currency: 'USD', winAmount: '25.0000' }));
-    await awaitPoints('25.000000');
+  it('shows a scored bet on the leaderboard, whole points and all', async () => {
+    // The only test that closes the loop, and it uses a currency with a rate
+    // so that the task's own wording — one point per USD won — is visible
+    // through every layer: 10.40 EUR at 1.08 is 11.232 USD, which the board
+    // reports as 11 points next to the exact value it was ranked by.
+    settle(settledEvent());
+    await awaitPoints('11.232000');
 
     const { body } = await app.http.get('/leaderboard').set('X-Player-Id', PLAYER_ID).expect(200);
 
@@ -314,12 +326,29 @@ describe('from the queue to the endpoint', () => {
       {
         rank: 1,
         playerId: PLAYER_ID,
-        points: 25,
-        pointsExact: '25.000000',
+        points: 11,
+        pointsExact: '11.232000',
         betsCounted: 1,
       },
     ]);
     expect(body.me.rank).toBe(1);
+  });
+
+  it('counts what it did on the metrics endpoint', async () => {
+    // Without this, nothing proves the consumer records anything at all: the
+    // unit tests assert against a fake recorder, and the metrics suite asserts
+    // the registry works. This is the wire between them.
+    settle(settledEvent());
+    await awaitPoints('11.232000');
+
+    settle(settledEvent({ betId: SECOND_BET_ID, currency: 'XYZ' }));
+    const parked = await broker.take(QUEUE_PARKED, 10_000);
+    broker.ack(parked);
+
+    const { text } = await app.http.get('/metrics').expect(200);
+
+    expect(text).toContain('bet_events_acknowledged_total{reason="scored"} 1');
+    expect(text).toContain('bet_events_parked_total{reason="unknown_currency"} 1');
   });
 });
 

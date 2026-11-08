@@ -547,7 +547,7 @@ TOURNAMENT_STARTS_AT / TOURNAMENT_ENDS_AT        # ISO-8601
 
 ## 12. Тесты
 
-**Unit** (без инфраструктуры), 296 тестов в 19 файлах:
+**Unit** (без инфраструктуры), 319 тестов в 20 файлах:
 
 | Файл | Что проверяет |
 |---|---|
@@ -569,6 +569,7 @@ TOURNAMENT_STARTS_AT / TOURNAMENT_ENDS_AT        # ISO-8601
 | `leaderboard/leaderboard.service` | ранги, floor vs exact, три состояния `me`, статус турнира |
 | `leaderboard/player-id.pipe` | пустой заголовок = отсутствует, битый = 400 |
 | `observability/metrics.service` | формат Prometheus, счётчики по причинам, свой реестр |
+| `tools/producer` | каталог сценариев, события валидируются настоящими DTO, порядок сообщений в каждом сценарии |
 | `toolchain` | трансформ отдаёт `design:paramtypes` |
 
 Юнит-тесты проверяют **оркестрацию** на подставленных ответах портов, а не
@@ -579,7 +580,7 @@ TOURNAMENT_STARTS_AT / TOURNAMENT_ENDS_AT        # ISO-8601
 отвечает так» — в интеграционных.
 
 **Интеграционные** (testcontainers: один Postgres и один RabbitMQ на весь прогон,
-поднимаются в `globalSetup`), 100 тестов в 5 файлах:
+поднимаются в `globalSetup`), 112 тестов в 5 файлах:
 
 | Файл | Тесты | Что проверяет |
 |---|---|---|

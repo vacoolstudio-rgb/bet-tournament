@@ -135,6 +135,21 @@ describe('the scenarios that make a claim checkable', () => {
     expect(payloadOf(rolled).betId).toBe(payloadOf(settled).betId);
   });
 
+  it('rollback-stale-timestamp scores inside the window and voids from outside it', () => {
+    // The settle has to be scoreable, or the scenario proves nothing: the
+    // claim is that a stale timestamp on the rollback cannot stop the debit.
+    const messages = plan('rollback-stale-timestamp');
+    const settled = messages.find((message) => message.kind === 'settled');
+    const rolled = messages.find((message) => message.kind === 'rollback');
+    const window = { from: new Date('2026-11-01T00:00:00Z'), to: new Date('2026-12-01T00:00:00Z') };
+    const settledAt = new Date(payloadOf(settled).settledAt);
+    const rolledAt = new Date(payloadOf(rolled).settledAt);
+
+    expect(settledAt >= window.from && settledAt < window.to).toBe(true);
+    expect(rolledAt < window.from || rolledAt >= window.to).toBe(true);
+    expect(payloadOf(rolled).betId).toBe(payloadOf(settled).betId);
+  });
+
   it('out-of-window settles outside the tournament', () => {
     const [message] = plan('out-of-window');
     const settledAt = new Date(payloadOf(message).settledAt);

@@ -58,7 +58,14 @@ export interface PlayerScoresRepositoryPort {
    */
   credit(input: CreditPointsInput): Promise<void>;
 
-  /** Debits a voided bet and resets the tie-break key. */
+  /**
+   * Debits a voided bet and resets the tie-break key.
+   *
+   * @throws Error when no aggregate row was updated. That cannot happen on any
+   *         path — a bet can only be voided after it was credited — so if it
+   *         ever does, the aggregate and the journal have drifted apart and
+   *         continuing would quietly keep points that no bet accounts for.
+   */
   debit(input: DebitPointsInput): Promise<void>;
 
   /** Drops the counted-bets tally alone — a voided losing bet. */

@@ -38,11 +38,14 @@ function consumer(
 
 describe('BetEventsConsumer', () => {
   it('acknowledges a handled delivery and counts it', async () => {
-    const { subject, processor, metrics } = consumer();
+    const { subject, processor, parking, classifier, metrics } = consumer();
     processor.process.mockResolvedValue('scored');
 
     await expect(subject.handle(settledEvent(), message())).resolves.toBeUndefined();
     expect(metrics.recordAck).toHaveBeenCalledWith('scored');
+    // Nothing to classify and nothing to park when the work simply succeeded.
+    expect(classifier.classify).not.toHaveBeenCalled();
+    expect(parking.park).not.toHaveBeenCalled();
   });
 
   it('routes by the delivery’s routing key, not by anything in the body', async () => {

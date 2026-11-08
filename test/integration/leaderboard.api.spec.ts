@@ -201,8 +201,11 @@ describe('GET /leaderboard', () => {
   describe('bad requests', () => {
     it.each([
       ['a limit of zero', '/leaderboard?limit=0'],
+      ['a negative limit', '/leaderboard?limit=-5'],
       ['a limit above the cap', '/leaderboard?limit=101'],
       ['a limit that is not a number', '/leaderboard?limit=many'],
+      ['a fractional limit', '/leaderboard?limit=2.5'],
+      ['an empty limit', '/leaderboard?limit='],
     ])('rejects %s', async (_case, url) => {
       const { body } = await app.http.get(url).expect(400);
 
@@ -214,6 +217,13 @@ describe('GET /leaderboard', () => {
       // Ignoring it would answer "you have no points" to a player who has
       // some.
       await app.http.get('/leaderboard').set('X-Player-Id', 'player-1').expect(400);
+    });
+
+    it('ignores a query parameter it does not know', async () => {
+      // Pins the validation pipe's whitelist: an unknown parameter is stripped
+      // rather than rejected, so a client appending a tracking tag does not
+      // get a 400.
+      await app.http.get('/leaderboard?utm_source=newsletter').expect(200);
     });
 
     it('treats an empty player id header as no header at all', async () => {

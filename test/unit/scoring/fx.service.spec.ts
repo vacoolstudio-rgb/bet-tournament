@@ -33,6 +33,15 @@ describe('FxService.rateFor', () => {
     }
   });
 
+  it('ignores a USD entry even if one reaches the config', () => {
+    // The schema rejects it, but the service must not depend on that: a stray
+    // USD rate would silently rescale every dollar bet in the tournament.
+    const stray = new FxService(fakeConfig({ fxRates: { USD: '2', EUR: '1.08' } }));
+
+    expect(stray.rateFor('USD').toString()).toBe('1');
+    expect(stray.toUsd({ amount: new Decimal('10'), currency: 'USD' }).toString()).toBe('10');
+  });
+
   it('is case sensitive, because a lowercase code is a producer bug', () => {
     expect(() => fx.rateFor('eur')).toThrow(UnknownCurrencyError);
   });

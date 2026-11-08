@@ -6,10 +6,10 @@ function headers(xDeath: unknown): MessagePropertyHeaders {
   return { 'x-death': xDeath } as unknown as MessagePropertyHeaders;
 }
 
-function rejectedFromMain(count: number): Record<string, unknown> {
+function fromMain(count: number, reason = 'rejected'): Record<string, unknown> {
   return {
     queue: QUEUE_BETS,
-    reason: 'rejected',
+    reason,
     exchange: 'bets',
     'routing-keys': ['bet.settled'],
     count,
@@ -29,13 +29,21 @@ describe('attemptFromHeaders', () => {
     // The one that matters. RabbitMQ groups hops by (queue, reason) and
     // increments `count` inside the entry, so counting entries would report 1
     // forever — and a retry loop that never reaches its limit never ends.
-    expect(attemptFromHeaders(headers([rejectedFromMain(3)]))).toBe(4);
+    expect(attemptFromHeaders(headers([fromMain(3)]))).toBe(4);
+  });
+
+  it('sums the hops a message took for different reasons', () => {
+    // A message can leave the main queue two ways: the consumer rejects it, or
+    // the quorum queue's delivery limit gives up on it. Each gets its own
+    // x-death entry, and taking only the first undercounts the attempts — so a
+    // message outlives the budget it was given.
+    expect(attemptFromHeaders(headers([fromMain(2), fromMain(1, 'delivery_limit')]))).toBe(4);
   });
 
   it('ignores hops through other queues', () => {
     const xDeath = [
       { queue: QUEUE_RETRY, reason: 'expired', exchange: 'bets.retry', count: 7 },
-      rejectedFromMain(2),
+      fromMain(2),
     ];
 
     expect(attemptFromHeaders(headers(xDeath))).toBe(3);

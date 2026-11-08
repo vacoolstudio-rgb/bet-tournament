@@ -21,7 +21,7 @@ export type ScenarioName =
   | 'unknown-currency'
   | 'rollback-unknown-currency'
   | 'out-of-window'
-  | 'rollback-out-of-window'
+  | 'rollback-stale-timestamp'
   | 'malformed'
   | 'load';
 
@@ -34,7 +34,7 @@ export interface Scenario {
 /**
  * Each scenario exists to make one claim checkable, including the two that
  * only look like edge cases until they cost a player their points:
- * `rollback-unknown-currency` and `rollback-out-of-window`.
+ * `rollback-unknown-currency` and `rollback-stale-timestamp`.
  */
 export const scenarios: readonly Scenario[] = [
   { name: 'happy', proves: 'settled bets in several currencies score the expected points' },
@@ -50,8 +50,14 @@ export const scenarios: readonly Scenario[] = [
   },
   { name: 'out-of-window', proves: 'settled outside the tournament window scores nothing' },
   {
-    name: 'rollback-out-of-window',
-    proves: 'a rollback for a bet settled outside the window still removes its points',
+    // The previous wording of this scenario claimed a rollback removes the
+    // points of a bet settled outside the window — which cannot happen,
+    // because such a bet is never credited in the first place. What actually
+    // needs proving is the reverse: the bet is scored normally, and the
+    // rollback arrives with a `settledAt` outside the window. Checking that
+    // field here would skip the rollback and leave the points forever.
+    name: 'rollback-stale-timestamp',
+    proves: 'a rollback whose own settledAt falls outside the window still removes the points',
   },
   { name: 'malformed', proves: 'an invalid payload is parked without retries' },
   { name: 'load', proves: 'throughput and leaderboard latency under volume' },
