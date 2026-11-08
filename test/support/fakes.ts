@@ -13,6 +13,7 @@ import type {
   OutcomeClassifierPort,
   ParkingPort,
 } from '../../src/messaging/contracts/index.js';
+import type { AmqpBroker } from '../../src/messaging/amqp-broker.js';
 import type { MetricsPort } from '../../src/observability/metrics.contract.js';
 import type { FxPort, TournamentPort } from '../../src/scoring/scoring.contract.js';
 
@@ -110,6 +111,18 @@ export function fakeClassifier() {
 
 export function fakeParking() {
   return { park: vi.fn<ParkingPort['park']>() };
+}
+
+/**
+ * Enough of the broker for the consumer: it only registers a handler, and the
+ * suite calls `handle` directly.
+ */
+export function fakeBroker() {
+  return {
+    consume: vi.fn(() => Promise.resolve()),
+    publish: vi.fn(() => Promise.resolve()),
+    isConnected: vi.fn(() => true),
+  } as unknown as AmqpBroker;
 }
 
 export function fakeMetrics() {

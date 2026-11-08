@@ -178,6 +178,22 @@ describe('GET /leaderboard', () => {
       });
     });
 
+    it('keeps a player with no points off the board as well as out of the ranking', async () => {
+      await seed([
+        { playerId: player(1), points: '90.000000', lastScoredAt: '2026-11-10T00:00:00Z' },
+        { playerId: PLAYER_ID, points: '0.000000', betsCounted: 2, lastScoredAt: null },
+      ]);
+
+      const { body } = await app.http.get('/leaderboard').set('X-Player-Id', PLAYER_ID).expect(200);
+
+      // One answer per player, not two: absent from the board and unranked in
+      // `me`.
+      expect((body.top as { playerId: string }[]).map((entry) => entry.playerId)).toEqual([
+        player(1),
+      ]);
+      expect(body.me.rank).toBeNull();
+    });
+
     it('gives the same answer to a player whose every bet was rolled back', async () => {
       // One has a row and the other does not, but neither has scored, so the
       // tournament has no position for either.

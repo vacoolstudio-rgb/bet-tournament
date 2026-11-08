@@ -71,7 +71,11 @@ export interface PlayerScoresRepositoryPort {
   /** Drops the counted-bets tally alone — a voided losing bet. */
   decrementCounted(input: DecrementCountedInput): Promise<void>;
 
-  /** Top `limit` players in the canonical order. */
+  /**
+   * Top `limit` players in the canonical order, counting only those with
+   * points: a tournament has no position for someone who has not scored in it,
+   * and the ranking predicate never counts them either.
+   */
   top(query: TopQuery): Promise<PlayerScoreRow[]>;
 
   findOne(key: PlayerKey): Promise<PlayerScoreRow | null>;

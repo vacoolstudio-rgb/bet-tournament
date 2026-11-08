@@ -63,9 +63,16 @@ export interface TournamentInfo {
 export interface LeaderboardView {
   readonly tournament: TournamentInfo;
   /**
-   * Up to `limit` rows, rank ascending from 1. A player in the top also
-   * appears in `me` — duplicated on purpose, so a client never has to search
-   * the list to find out whether the caller is in it.
+   * Up to `limit` rows, rank ascending from 1.
+   *
+   * Only players who have scored. A player with zero points has no position —
+   * `me.rank` is null for them — so listing them here would have the service
+   * answer the same question two different ways: rank 3 in the board and no
+   * rank at all in `me`, for one player in one response.
+   *
+   * A player in the top also appears in `me`, duplicated on purpose, so a
+   * client never has to search the list to find out whether the caller is in
+   * it.
    */
   readonly top: readonly LeaderboardEntry[];
   /** Null when `X-Player-Id` was absent. */

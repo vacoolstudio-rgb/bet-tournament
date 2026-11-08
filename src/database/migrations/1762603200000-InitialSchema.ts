@@ -99,6 +99,11 @@ export class InitialSchema1762603200000 implements MigrationInterface {
     // out even though it is the default for ASC — the index has to match the
     // ORDER BY exactly or the sort is not free, and a reader should not have to
     // remember which default applies.
+    //
+    // Partial, because both queries that use this order only ever look at
+    // players who have scored: the board excludes the rest, and the ranking
+    // predicate compares against a positive score. Rows for players whose
+    // every bet was rolled back stay out of the index entirely.
     await queryRunner.query(`
       CREATE INDEX player_scores_leaderboard_idx
         ON player_scores (
@@ -107,6 +112,7 @@ export class InitialSchema1762603200000 implements MigrationInterface {
           last_scored_at ASC NULLS LAST,
           player_id ASC
         )
+        WHERE points > 0
     `);
   }
 

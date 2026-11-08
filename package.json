@@ -11,7 +11,7 @@
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "start": "node --env-file-if-exists=.env --enable-source-maps dist/main.js",
-    "start:dev": "node --env-file-if-exists=.env --import tsx --watch src/main.ts",
+    "start:dev": "npm run build -- --watch & node --enable-source-maps --env-file-if-exists=.env --watch dist/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint \"{src,test,tools}/**/*.ts\"",
     "lint:fix": "eslint \"{src,test,tools}/**/*.ts\" --fix",
@@ -29,7 +29,6 @@
     "verify": "npm run typecheck && npm run lint && npm run format:check && npm run test"
   },
   "dependencies": {
-    "@golevelup/nestjs-rabbitmq": "^9.1.1",
     "@nestjs/common": "^12.4.0",
     "@nestjs/core": "^12.4.0",
     "@nestjs/platform-express": "^12.4.0",
@@ -37,6 +36,7 @@
     "@nestjs/terminus": "^12.1.0",
     "@nestjs/typeorm": "^12.0.3",
     "@prometheus-io/client": "^0.16.1",
+    "amqp-connection-manager": "^5.0.1",
     "amqplib": "^2.2.1",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
@@ -56,7 +56,6 @@
     "@swc/core": "^1.16.22",
     "@testcontainers/postgresql": "^12.2.1",
     "@testcontainers/rabbitmq": "^12.2.1",
-    "@types/amqplib": "^0.10.8",
     "@types/express": "^5.0.6",
     "@types/node": "^26.6.6",
     "@types/supertest": "^7.2.1",

@@ -31,6 +31,10 @@ const toRow = (row: ScoreRow): PlayerScoreRow => ({
  * It has to match `player_scores_leaderboard_idx` character for character —
  * including `NULLS LAST`, which is the default for `ASC` and spelled out
  * anyway — or the sort stops being free and nothing says so.
+ *
+ * The index is partial on `points > 0`, which covers both queries that use
+ * this order: the board lists only players who have scored, and the ranking
+ * predicate only ever compares against a positive score.
  */
 const LEADERBOARD_ORDER = 'points DESC, last_scored_at ASC NULLS LAST, player_id ASC';
 
@@ -134,7 +138,7 @@ export class PlayerScoresRepository implements PlayerScoresRepositoryPort {
     const rows = await this.dataSource.query<ScoreRow[]>(
       `SELECT player_id, points, bets_counted, last_scored_at
          FROM player_scores
-        WHERE tournament_id = $1
+        WHERE tournament_id = $1 AND points > 0
         ORDER BY ${LEADERBOARD_ORDER}
         LIMIT $2`,
       [tournamentId, limit],

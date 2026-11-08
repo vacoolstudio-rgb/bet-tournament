@@ -1,15 +1,26 @@
 /**
  * Event producer used to drive the service by hand.
  *
+ *   npm run produce -- --list
  *   npm run produce -- --scenario=happy
  *   npm run produce -- --scenario=load --count=50000
+ *   npm run produce -- --scenario=rollback --dry-run
  *
  * It builds `BetSettledEvent` and `BetRollbackEvent` values from the same
  * contracts the consumer validates against, so a change to the wire format
  * breaks the producer at compile time instead of at runtime.
  */
-import { notImplemented } from '../src/common/not-implemented.error.js';
+import { randomUUID } from 'node:crypto';
+import amqp from 'amqp-connection-manager';
+import type { Channel } from 'amqplib';
+import { loadConfig } from '../src/config/app-config.js';
 import type { BetRollbackEvent, BetSettledEvent } from '../src/messaging/contracts/index.js';
+import {
+  buildTopology,
+  EXCHANGE_BETS,
+  ROUTING_KEY_ROLLBACK,
+  ROUTING_KEY_SETTLED,
+} from '../src/messaging/topology.js';
 
 export type ScenarioName =
   | 'happy'
@@ -83,10 +94,66 @@ export type PlannedMessage =
     }
   | { readonly kind: 'raw'; readonly routingKey: string; readonly body: string };
 
+export interface TournamentWindowOptions {
+  readonly startsAt: Date;
+  readonly endsAt: Date;
+}
+
 export interface ProducerOptions {
   readonly scenario: ScenarioName;
   /** Only meaningful for `load`. */
   readonly count: number;
+  /**
+   * Which window counts. The CLI passes the service's own configuration; the
+   * default matches `.env.example`, so planning works without an environment
+   * and the two cannot drift silently — a scenario built against the wrong
+   * window would prove nothing.
+   */
+  readonly window?: TournamentWindowOptions | undefined;
+}
+
+const DEFAULT_WINDOW: TournamentWindowOptions = {
+  startsAt: new Date('2026-11-01T00:00:00.000Z'),
+  endsAt: new Date('2026-12-01T00:00:00.000Z'),
+};
+
+/** A currency no sane configuration carries, for the parking scenarios. */
+const UNCONFIGURED_CURRENCY = 'ZZZ';
+
+const settled = (payload: BetSettledEvent): PlannedMessage => ({
+  kind: 'settled',
+  routingKey: ROUTING_KEY_SETTLED,
+  payload,
+});
+
+const rolledBack = (payload: BetRollbackEvent): PlannedMessage => ({
+  kind: 'rollback',
+  routingKey: ROUTING_KEY_ROLLBACK,
+  payload,
+});
+
+/** Midway through the window, so a scenario is never borderline by accident. */
+function inside({ startsAt, endsAt }: TournamentWindowOptions): string {
+  return new Date((startsAt.getTime() + endsAt.getTime()) / 2).toISOString();
+}
+
+function outside({ startsAt }: TournamentWindowOptions): string {
+  return new Date(startsAt.getTime() - 24 * 60 * 60 * 1000).toISOString();
+}
+
+function bet(
+  window: TournamentWindowOptions,
+  overrides: Partial<BetSettledEvent> = {},
+): BetSettledEvent {
+  return {
+    betId: randomUUID(),
+    playerId: randomUUID(),
+    currency: 'EUR',
+    stake: '10.0000',
+    winAmount: '10.4000',
+    settledAt: inside(window),
+    ...overrides,
+  };
 }
 
 /**
@@ -95,11 +162,201 @@ export interface ProducerOptions {
  * Separated from publishing so a test can assert the plan without a broker,
  * and so `--dry-run` can print it.
  */
-export function planScenario(_options: ProducerOptions): readonly PlannedMessage[] {
-  return notImplemented('planScenario');
+export function planScenario({ scenario, count, window }: ProducerOptions): PlannedMessage[] {
+  const w = window ?? DEFAULT_WINDOW;
+
+  switch (scenario) {
+    case 'happy': {
+      const player = randomUUID();
+
+      // 10.40 EUR at 1.08 is 11.232, 10 GBP at 1.27 is 12.70, 25 USD is 25.
+      return [
+        bet(w, { playerId: player, currency: 'EUR', winAmount: '10.4000' }),
+        bet(w, { playerId: player, currency: 'GBP', winAmount: '10.0000' }),
+        bet(w, { playerId: player, currency: 'USD', winAmount: '25.0000' }),
+      ].map(settled);
+    }
+
+    case 'duplicate': {
+      // The same message twice, not two messages that look alike.
+      const event = bet(w);
+
+      return [settled(event), settled(event)];
+    }
+
+    case 'rollback': {
+      const event = bet(w);
+
+      return [settled(event), rolledBack({ betId: event.betId, playerId: event.playerId })];
+    }
+
+    case 'rollback-first': {
+      const event = bet(w);
+
+      return [rolledBack({ betId: event.betId, playerId: event.playerId }), settled(event)];
+    }
+
+    case 'rollback-twice': {
+      const event = bet(w);
+      const undo = rolledBack({ betId: event.betId, playerId: event.playerId });
+
+      return [settled(event), undo, undo];
+    }
+
+    case 'losing-bet':
+      return [settled(bet(w, { winAmount: '0.0000' }))];
+
+    case 'unknown-currency':
+      return [settled(bet(w, { currency: UNCONFIGURED_CURRENCY }))];
+
+    case 'rollback-unknown-currency': {
+      // The settle has to be scoreable, or the scenario proves nothing: the
+      // claim is that an unconfigured currency on the rollback cannot stop the
+      // debit.
+      const event = bet(w, { currency: 'EUR' });
+
+      return [
+        settled(event),
+        rolledBack({
+          betId: event.betId,
+          playerId: event.playerId,
+          currency: UNCONFIGURED_CURRENCY,
+          stake: event.stake,
+          winAmount: event.winAmount,
+          settledAt: event.settledAt,
+        }),
+      ];
+    }
+
+    case 'out-of-window':
+      return [settled(bet(w, { settledAt: outside(w) }))];
+
+    case 'rollback-stale-timestamp': {
+      const event = bet(w);
+
+      return [
+        settled(event),
+        rolledBack({
+          betId: event.betId,
+          playerId: event.playerId,
+          currency: event.currency,
+          settledAt: outside(w),
+        }),
+      ];
+    }
+
+    case 'malformed':
+      return [{ kind: 'raw', routingKey: ROUTING_KEY_SETTLED, body: '{"betId": not json' }];
+
+    case 'load': {
+      const player = randomUUID();
+
+      // One player on purpose: it is the aggregate row everything contends
+      // for, so this is also the concurrency test.
+      return Array.from({ length: count }, () =>
+        settled(bet(w, { playerId: player, currency: 'USD', winAmount: '1.0000' })),
+      );
+    }
+  }
 }
 
 /** Publishes the planned messages to the `bets` exchange. */
-export function runScenario(_options: ProducerOptions): Promise<void> {
-  return notImplemented('runScenario');
+export async function runScenario(options: ProducerOptions): Promise<void> {
+  const config = loadConfig();
+  const messages = planScenario({ ...options, window: config.tournament });
+
+  const connection = amqp.connect([config.rabbit.url]);
+  // The topology is declared here too, so the producer works before the
+  // service has ever run — publishing into an exchange that does not exist
+  // drops the message without a word.
+  const channel = connection.createChannel({
+    json: false,
+    setup: async (ch: Channel) => {
+      const topology = buildTopology({ retryTtlMs: config.rabbit.retryTtlMs });
+
+      for (const exchange of topology.exchanges) {
+        await ch.assertExchange(exchange.name, exchange.type, exchange.options);
+      }
+      for (const queue of topology.queues) {
+        await ch.assertQueue(queue.name, queue.options);
+        for (const binding of queue.bindings) {
+          await ch.bindQueue(queue.name, binding.exchange, binding.routingKey);
+        }
+      }
+    },
+  });
+
+  try {
+    await channel.waitForConnect();
+
+    for (const message of messages) {
+      const content = Buffer.from(
+        message.kind === 'raw' ? message.body : JSON.stringify(message.payload),
+      );
+      await channel.publish(EXCHANGE_BETS, message.routingKey, content, { persistent: true });
+    }
+
+    console.log(`Published ${messages.length} message(s) for "${options.scenario}".`);
+  } finally {
+    await channel.close();
+    await connection.close();
+  }
+}
+
+interface Arguments {
+  readonly scenario?: string | undefined;
+  readonly count: number;
+  readonly list: boolean;
+  readonly dryRun: boolean;
+}
+
+function parseArguments(argv: readonly string[]): Arguments {
+  const value = (name: string): string | undefined =>
+    argv.find((argument) => argument.startsWith(`--${name}=`))?.split('=')[1];
+
+  return {
+    ...(value('scenario') === undefined ? {} : { scenario: value('scenario') }),
+    count: Number(value('count') ?? 1_000),
+    list: argv.includes('--list'),
+    dryRun: argv.includes('--dry-run'),
+  };
+}
+
+async function main(): Promise<void> {
+  const { scenario, count, list, dryRun } = parseArguments(process.argv.slice(2));
+
+  if (list || scenario === undefined) {
+    console.log('Scenarios:\n');
+    for (const entry of scenarios) {
+      console.log(`  ${entry.name.padEnd(28)} ${entry.proves}`);
+    }
+    console.log('\nUsage: npm run produce -- --scenario=<name> [--count=N] [--dry-run]');
+
+    return;
+  }
+
+  if (!scenarios.some((entry) => entry.name === scenario)) {
+    throw new Error(`Unknown scenario "${scenario}". Run with --list to see them all.`);
+  }
+
+  const options: ProducerOptions = { scenario: scenario as ScenarioName, count };
+
+  if (dryRun) {
+    console.log(JSON.stringify(planScenario(options), null, 2));
+
+    return;
+  }
+
+  await runScenario(options);
+}
+
+// Only when run as a script: the module is also imported by the tests.
+if (
+  process.argv[1] !== undefined &&
+  import.meta.url.endsWith(process.argv[1].split('/').pop() ?? '')
+) {
+  main().catch((error: unknown) => {
+    console.error(error);
+    process.exit(1);
+  });
 }

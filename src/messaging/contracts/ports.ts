@@ -59,6 +59,31 @@ export interface ParkingPort {
 
 export const PARKING_PUBLISHER = Symbol('ParkingPort');
 
+/**
+ * What the consumer tells the broker to do with a delivery.
+ *
+ * A value, not a call on the channel: the consumer decides, the broker
+ * translates. `retry` becomes a reject without requeue, which hands the
+ * message to the dead-letter route — the TTL hop — rather than redelivering it
+ * instantly.
+ */
+export type DeliveryVerdict = 'ack' | 'retry';
+
+export interface PublishRequest {
+  readonly exchange: string;
+  readonly routingKey: string;
+  /** Published verbatim; the caller owns the serialisation. */
+  readonly content: Buffer;
+  readonly headers?: Readonly<Record<string, unknown>> | undefined;
+}
+
+export interface BrokerPort {
+  /** Publishes and waits for the broker to confirm it. */
+  publish(request: PublishRequest): Promise<void>;
+}
+
+export const BROKER = Symbol('BrokerPort');
+
 export interface BrokerHealthPort {
   /**
    * Whether the broker connection is up right now.

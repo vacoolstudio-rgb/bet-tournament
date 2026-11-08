@@ -1,9 +1,14 @@
-import { Nack } from '@golevelup/nestjs-rabbitmq';
 import type { ConsumeMessage } from 'amqplib';
 import { PoisonMessageError, RetryableError } from '../../../src/common/errors.js';
 import { BetEventsConsumer } from '../../../src/messaging/bet-events.consumer.js';
 import { ROUTING_KEY_SETTLED } from '../../../src/messaging/topology.js';
-import { fakeClassifier, fakeMetrics, fakeParking, fakeProcessor } from '../../support/fakes.js';
+import {
+  fakeBroker,
+  fakeClassifier,
+  fakeMetrics,
+  fakeParking,
+  fakeProcessor,
+} from '../../support/fakes.js';
 import { settledEvent } from '../../support/builders.js';
 
 function message(routingKey = ROUTING_KEY_SETTLED, headers: unknown = {}): ConsumeMessage {
@@ -28,7 +33,9 @@ function consumer(
   const metrics = parts.metrics ?? fakeMetrics();
 
   return {
-    subject: new BetEventsConsumer(processor, classifier, parking, metrics),
+    // The broker is only asked to register the handler; this suite calls
+    // `handle` directly, which is the point of the verdict being a value.
+    subject: new BetEventsConsumer(processor, classifier, parking, metrics, fakeBroker()),
     processor,
     classifier,
     parking,
@@ -41,7 +48,7 @@ describe('BetEventsConsumer', () => {
     const { subject, processor, parking, classifier, metrics } = consumer();
     processor.process.mockResolvedValue('scored');
 
-    await expect(subject.handle(settledEvent(), message())).resolves.toBeUndefined();
+    await expect(subject.handle(settledEvent(), message())).resolves.toBe('ack');
     expect(metrics.recordAck).toHaveBeenCalledWith('scored');
     // Nothing to classify and nothing to park when the work simply succeeded.
     expect(classifier.classify).not.toHaveBeenCalled();
@@ -74,18 +81,15 @@ describe('BetEventsConsumer', () => {
     expect(classifier.classify).toHaveBeenCalledWith({ error, attempt: 3 });
   });
 
-  it('nacks without requeue on a retryable failure, so the TTL hop takes it', async () => {
+  it('asks for a retry on a retryable failure, so the TTL hop takes it', async () => {
     const { subject, processor, classifier, metrics } = consumer();
     const error = new RetryableError('db is down');
     processor.process.mockRejectedValue(error);
     classifier.classify.mockReturnValue({ kind: 'retry', attempt: 1, error });
 
-    const result = await subject.handle(settledEvent(), message());
-
-    expect(result).toBeInstanceOf(Nack);
-    // Requeueing in place would redeliver instantly and burn every attempt in
-    // milliseconds; the dead-letter route is what buys the delay.
-    expect((result as Nack).requeue).toBe(false);
+    // The verdict is a value; the broker is what turns it into a reject
+    // without requeue, and the retry-hop integration test proves that half.
+    await expect(subject.handle(settledEvent(), message())).resolves.toBe('retry');
     expect(metrics.recordRetry).toHaveBeenCalledWith(1);
   });
 
@@ -101,8 +105,8 @@ describe('BetEventsConsumer', () => {
 
     expect(parking.park).toHaveBeenCalledWith({ message: delivery, outcome });
     // Acknowledged, because the body is already safe in the parking queue;
-    // nacking it would send it round the retry loop it can never survive.
-    expect(result).toBeUndefined();
+    // rejecting it would send it round the retry loop it can never survive.
+    expect(result).toBe('ack');
     expect(metrics.recordPark).toHaveBeenCalledWith('invalid_schema');
   });
 
@@ -120,9 +124,9 @@ describe('BetEventsConsumer', () => {
 
     const result = await subject.handle(settledEvent(), message());
 
-    // Acking here would drop the payload on the floor. Nacked, it goes round
+    // Acking here would drop the payload on the floor. Rejected, it goes round
     // the retry hop and the delivery limit eventually parks it for us.
-    expect(result).toBeInstanceOf(Nack);
+    expect(result).toBe('retry');
     expect(metrics.recordPark).not.toHaveBeenCalled();
   });
 

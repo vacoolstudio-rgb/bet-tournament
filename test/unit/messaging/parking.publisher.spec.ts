@@ -1,6 +1,6 @@
-import type { AmqpConnection } from '@golevelup/nestjs-rabbitmq';
 import type { ConsumeMessage } from 'amqplib';
 import { PoisonMessageError } from '../../../src/common/errors.js';
+import type { BrokerPort, PublishRequest } from '../../../src/messaging/contracts/index.js';
 import { ParkingPublisher } from '../../../src/messaging/parking.publisher.js';
 import { isIsoTimestamp } from '../../../src/common/time.js';
 import {
@@ -25,9 +25,17 @@ function delivery(): ConsumeMessage {
 }
 
 function publisher() {
-  const amqp = { publish: vi.fn().mockResolvedValue(true) };
+  const broker = { publish: vi.fn<BrokerPort['publish']>().mockResolvedValue(undefined) };
 
-  return { subject: new ParkingPublisher(amqp as unknown as AmqpConnection), amqp };
+  return { subject: new ParkingPublisher(broker), broker };
+}
+
+/** The one request the publisher is expected to have made. */
+function published(broker: ReturnType<typeof publisher>['broker']): PublishRequest {
+  const request = broker.publish.mock.calls[0]?.[0];
+  if (request === undefined) throw new Error('nothing was published');
+
+  return request;
 }
 
 describe('ParkingPublisher', () => {
@@ -39,31 +47,31 @@ describe('ParkingPublisher', () => {
   } as const;
 
   it('publishes to the parking exchange', async () => {
-    const { subject, amqp } = publisher();
+    const { subject, broker } = publisher();
 
     await subject.park({ message: delivery(), outcome });
 
-    expect(amqp.publish).toHaveBeenCalledTimes(1);
-    expect(amqp.publish.mock.calls[0]?.[0]).toBe(EXCHANGE_PARKED);
-    expect(amqp.publish.mock.calls[0]?.[1]).toBe(ROUTING_KEY_PARKED);
+    expect(broker.publish).toHaveBeenCalledTimes(1);
+    expect(published(broker).exchange).toBe(EXCHANGE_PARKED);
+    expect(published(broker).routingKey).toBe(ROUTING_KEY_PARKED);
   });
 
   it('keeps the original body byte for byte', async () => {
     // Whoever looks at the parking queue needs the payload that failed, not a
     // re-serialised approximation of it.
-    const { subject, amqp } = publisher();
+    const { subject, broker } = publisher();
 
     await subject.park({ message: delivery(), outcome });
 
-    expect(amqp.publish.mock.calls[0]?.[2]).toBe(body);
+    expect(published(broker).content).toBe(body);
   });
 
   it('explains itself in the headers', async () => {
-    const { subject, amqp } = publisher();
+    const { subject, broker } = publisher();
 
     await subject.park({ message: delivery(), outcome });
 
-    const headers = amqp.publish.mock.calls[0]?.[3]?.headers as Record<string, unknown>;
+    const headers = published(broker).headers ?? {};
     expect(headers[HEADER_PARK_REASON]).toBe('invalid_schema');
     expect(headers[HEADER_PARK_ROUTING_KEY]).toBe(ROUTING_KEY_SETTLED);
     expect(headers[HEADER_PARK_ATTEMPTS]).toBe(1);
@@ -71,32 +79,23 @@ describe('ParkingPublisher', () => {
   });
 
   it('stamps when it gave up, so the parking queue can be read chronologically', async () => {
-    const { subject, amqp } = publisher();
+    const { subject, broker } = publisher();
 
     await subject.park({ message: delivery(), outcome });
 
-    const headers = amqp.publish.mock.calls[0]?.[3]?.headers as Record<string, unknown>;
-    expect(isIsoTimestamp(headers[HEADER_PARK_AT])).toBe(true);
-  });
-
-  it('publishes persistently, so a broker restart does not lose the evidence', async () => {
-    const { subject, amqp } = publisher();
-
-    await subject.park({ message: delivery(), outcome });
-
-    expect(amqp.publish.mock.calls[0]?.[3]?.persistent).toBe(true);
+    expect(isIsoTimestamp((published(broker).headers ?? {})[HEADER_PARK_AT])).toBe(true);
   });
 
   it('propagates a publish failure instead of swallowing it', async () => {
     // The caller must not acknowledge a message that was never parked.
-    const { subject, amqp } = publisher();
-    amqp.publish.mockRejectedValue(new Error('channel closed'));
+    const { subject, broker } = publisher();
+    broker.publish.mockRejectedValue(new Error('channel closed'));
 
     await expect(subject.park({ message: delivery(), outcome })).rejects.toThrow('channel closed');
   });
 
   it('carries the exhausted-attempts reason as well as a payload reason', async () => {
-    const { subject, amqp } = publisher();
+    const { subject, broker } = publisher();
 
     await subject.park({
       message: delivery(),
@@ -108,7 +107,7 @@ describe('ParkingPublisher', () => {
       },
     });
 
-    const headers = amqp.publish.mock.calls[0]?.[3]?.headers as Record<string, unknown>;
+    const headers = published(broker).headers ?? {};
     expect(headers[HEADER_PARK_REASON]).toBe('attempts_exhausted');
     expect(headers[HEADER_PARK_ATTEMPTS]).toBe(5);
   });

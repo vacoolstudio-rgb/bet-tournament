@@ -3,6 +3,7 @@ export type { BetEventName, BetRollbackEvent, BetSettledEvent } from './bet-even
 export type { AckReason, FailureOutcome, MessageOutcome, ParkOutcome } from './message-outcome.js';
 export {
   BET_EVENT_PROCESSOR,
+  BROKER,
   BROKER_HEALTH,
   OUTCOME_CLASSIFIER,
   PARKING_PUBLISHER,
@@ -10,9 +11,12 @@ export {
 export type {
   BetEventProcessorPort,
   BrokerHealthPort,
+  BrokerPort,
+  DeliveryVerdict,
   FailureContext,
   IncomingBetEvent,
   OutcomeClassifierPort,
   ParkingPort,
   ParkRequest,
+  PublishRequest,
 } from './ports.js';

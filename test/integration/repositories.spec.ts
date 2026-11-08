@@ -628,7 +628,11 @@ describe('PlayerScoresRepository.top and rankOf', () => {
     expect(top.map((row) => row.playerId)).toEqual([player(1), player(2)]);
   });
 
-  it('puts players who never scored last', async () => {
+  it('leaves out players who have not scored', async () => {
+    // Found by running the service rather than by reading it: a player whose
+    // every bet was rolled back was appearing on the board at rank 3 while
+    // `me.rank` for that same player, in that same response, was null. The
+    // board is of players who have scored.
     await seed([
       { playerId: player(1), points: '0.000000', settledAt: null },
       { playerId: player(2), points: '1.000000', settledAt: at(10) },
@@ -636,8 +640,7 @@ describe('PlayerScoresRepository.top and rankOf', () => {
 
     const top = await scores.top({ tournamentId, limit: 10 });
 
-    expect(top.map((row) => row.playerId)).toEqual([player(2), player(1)]);
-    expect(top[1]?.lastScoredAt).toBeNull();
+    expect(top.map((row) => row.playerId)).toEqual([player(2)]);
   });
 
   it('returns no more than the limit', async () => {
