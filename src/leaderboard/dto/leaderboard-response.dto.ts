@@ -1,6 +1,20 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import type {
+  LeaderboardEntry,
+  LeaderboardView,
+  PlayerStanding,
+  TournamentInfo,
+} from '../leaderboard.contract.js';
 
-export class LeaderboardEntryDto {
+/**
+ * Swagger projections of the contracts in `leaderboard.contract.ts`.
+ *
+ * The interfaces are what the code depends on; these classes exist because
+ * decorators need a runtime class to hang metadata on. `implements` keeps the
+ * two from drifting — a renamed field fails the build rather than quietly
+ * documenting a response that no longer exists.
+ */
+export class LeaderboardEntryDto implements LeaderboardEntry {
   @ApiProperty({ example: 1, description: '1-based position in the tournament' })
   rank: number;
 
@@ -25,7 +39,30 @@ export class LeaderboardEntryDto {
   betsCounted: number;
 }
 
-export class TournamentInfoDto {
+export class PlayerStandingDto implements PlayerStanding {
+  @ApiProperty({
+    type: Number,
+    nullable: true,
+    description:
+      'Null for a player with no scoring bets: the service does not know how many ' +
+      'players the tournament has, so it cannot invent a last place.',
+  })
+  rank: number | null;
+
+  @ApiProperty({ format: 'uuid' })
+  playerId: string;
+
+  @ApiProperty({ example: 87 })
+  points: number;
+
+  @ApiProperty({ example: '87.120000' })
+  pointsExact: string;
+
+  @ApiProperty({ example: 6 })
+  betsCounted: number;
+}
+
+export class TournamentInfoDto implements TournamentInfo {
   @ApiProperty({ example: 'nov-2026' })
   code: string;
 
@@ -39,7 +76,7 @@ export class TournamentInfoDto {
   status: 'pending' | 'active' | 'finished';
 }
 
-export class LeaderboardResponseDto {
+export class LeaderboardResponseDto implements LeaderboardView {
   @ApiProperty({ type: TournamentInfoDto })
   tournament: TournamentInfoDto;
 
@@ -47,14 +84,11 @@ export class LeaderboardResponseDto {
   top: LeaderboardEntryDto[];
 
   @ApiPropertyOptional({
-    type: LeaderboardEntryDto,
+    type: PlayerStandingDto,
     nullable: true,
-    description:
-      'The caller from `X-Player-Id`. Null when the header is absent. A player with no ' +
-      'scoring bets yet gets `points: 0` and `rank: null` — the service does not know how ' +
-      'many players the tournament has, so it cannot invent a last place.',
+    description: 'The caller from `X-Player-Id`. Null when the header is absent.',
   })
-  me: (Omit<LeaderboardEntryDto, 'rank'> & { rank: number | null }) | null;
+  me: PlayerStandingDto | null;
 
   @ApiProperty({ format: 'date-time' })
   generatedAt: string;

@@ -215,38 +215,66 @@ Redis/ZSET для лидерборда **не беру**: при одном ин
 
 ## 5. Структура
 
+Контракты вынесены отдельно от реализаций: интерфейс — то, от чего зависит код,
+класс — адаптер под него. Сервисы инжектятся по токенам, поэтому юнит-тест
+подставляет объект-заглушку, а не поднимает TypeORM.
+
 ```
 src/
   main.ts                      bootstrap API + консьюмер в одном процессе
   app.module.ts
-  config/                      zod-схема env, курсы валют, окно турнира
+  config/
+    env.schema.ts              zod-схема окружения
+    app-config.ts              AppConfig + loadConfig
+    config.module.ts           APP_CONFIG
+  common/
+    money.ts                   Decimal-арифметика, границы сумм
+    errors.ts                  PoisonMessageError / RetryableError и причины
+    not-implemented.error.ts   маркер незаполненного тела
   database/
-    data-source.ts
-    migrations/
+    contracts/                 ← порты и I/O
+      transaction.ts             TransactionScope, UnitOfWorkPort
+      bets.repository.port.ts    SettledBetRow, InsertSettledResult, VoidedBet…
+      player-scores.repository.port.ts  CreditPointsInput, DebitPointsInput…
+      tournaments.repository.port.ts    TournamentWindow
     entities/                  Tournament, Bet, PlayerScore
+    migrations/                явный список, без glob
+    repositories/              Postgres-адаптеры портов
+    unit-of-work.ts            TypeOrmUnitOfWork
   messaging/
-    rabbit.module.ts           топология: exchange, queue, retry, parking, prefetch
-    bet-events.consumer.ts     ack-политика, классификация ошибок
-    parking.publisher.ts       явная парковка отравленных сообщений
-    dto/                       BetSettledEvent, BetRollbackEvent
+    contracts/                 ← порты и I/O
+      bet-events.contract.ts     BetSettledEvent, BetRollbackEvent (wire)
+      message-outcome.ts         MessageOutcome, AckReason, FailureOutcome
+      ports.ts                   BetEventProcessorPort, OutcomeClassifierPort, ParkingPort
+    dto/                       валидаторы, implements wire-контракты
+    topology.ts                exchange/queue/аргументы как данные
+    bet-event.processor.ts     DTO → команда домена
+    bet-events.consumer.ts     AMQP-адаптер: outcome → ack/nack/publish
+    outcome.classifier.ts      (error, attempt) → retry | park
+    parking.publisher.ts
   scoring/
-    scoring.service.ts         начислить / откатить (транзакция)
-    fx.service.ts              конвертация по курсам из конфига
-    tournament.service.ts      активный турнир, попадание в окно
+    scoring.contract.ts        ← SettleBetCommand, RollbackBetCommand, исходы, ScoringPort, FxPort, TournamentPort
+    scoring.service.ts  fx.service.ts  tournament.service.ts
   leaderboard/
-    leaderboard.controller.ts  GET /leaderboard
-    leaderboard.service.ts     топ-100 + позиция игрока
-  common/                      money, типизированные ошибки, фильтры
+    leaderboard.contract.ts    ← LeaderboardQuery, LeaderboardEntry, PlayerStanding, LeaderboardView, LeaderboardPort
+    dto/                       Swagger-проекции контрактов (implements)
+    leaderboard.controller.ts  leaderboard.service.ts
+    player-id.decorator.ts     @PlayerId(PlayerIdPipe)
+    player-id.pipe.ts
+  health/
 tools/
-  producer.ts                  CLI-продюсер со сценариями
+  db.ts                        миграции
+  producer.ts                  сценарии; строит события по тем же контрактам
 test/
-  unit/
-  integration/                 testcontainers: postgres + rabbitmq
+  unit/  integration/
 docker-compose.yml
 README.md  AGENTS.md  CLAUDE.md→AGENTS.md  DECISIONS.md  PLAN.md
 ```
 
----
+Правило по типам: **в домен входит разобранное** (`Decimal`, `Date`), **из домена
+выходит текст** (точные десятичные строки) — он идёт в логи, метрики и HTTP.
+Конвертирует транспортный слой, поэтому ни один сервис не решает заново, что
+значит `"12.3400"`.
 
 ## 6. Схема БД
 

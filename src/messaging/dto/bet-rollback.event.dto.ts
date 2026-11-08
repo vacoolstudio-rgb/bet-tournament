@@ -1,4 +1,5 @@
 import { IsISO8601, IsOptional, IsUUID, Matches } from 'class-validator';
+import type { BetRollbackEvent } from '../contracts/index.js';
 import { IsMoneyAmount } from './is-money-amount.decorator.js';
 
 /**
@@ -16,7 +17,7 @@ import { IsMoneyAmount } from './is-money-amount.decorator.js';
  *
  * How much to subtract is known from the journal, not from this payload.
  */
-export class BetRollbackEventDto {
+export class BetRollbackEventDto implements BetRollbackEvent {
   @IsUUID()
   betId: string;
 

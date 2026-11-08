@@ -1,26 +1,23 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { notImplemented } from '../common/not-implemented.error.js';
-import { ScoringService } from '../scoring/scoring.service.js';
-import type { AckReason } from './message-outcome.js';
+import { SCORING_SERVICE } from '../scoring/scoring.contract.js';
+import type { ScoringPort } from '../scoring/scoring.contract.js';
+import type { AckReason, BetEventProcessorPort, IncomingBetEvent } from './contracts/index.js';
 
 /**
- * Validates a raw event and routes it to the right scoring call.
+ * The transport-to-domain boundary.
  *
- * Deliberately knows nothing about AMQP: the transport adapter catches what
- * this throws and decides between a retry and the parking lot, which keeps the
- * error policy testable without a broker.
+ * Three jobs, in order: validate the payload against the DTO, normalise it
+ * into a command (amounts to `Decimal`, timestamps to `Date`), and dispatch on
+ * the routing key. Knows nothing about AMQP, so the error policy can be tested
+ * without a broker; knows nothing about SQL, so the domain stays unaware of
+ * where events come from.
  */
 @Injectable()
-export class BetEventProcessor {
-  constructor(private readonly scoring: ScoringService) {}
+export class BetEventProcessor implements BetEventProcessorPort {
+  constructor(@Inject(SCORING_SERVICE) private readonly scoring: ScoringPort) {}
 
-  /**
-   * @throws PoisonMessageError for a payload or routing key that can never
-   *         succeed (`invalid_schema`, `unknown_currency`,
-   *         `amount_out_of_range`, `unknown_routing_key`).
-   * @throws RetryableError for an infrastructure failure.
-   */
-  process(_routingKey: string, _payload: unknown): Promise<AckReason> {
+  process(_event: IncomingBetEvent): Promise<AckReason> {
     return notImplemented('BetEventProcessor.process', this.scoring);
   }
 }

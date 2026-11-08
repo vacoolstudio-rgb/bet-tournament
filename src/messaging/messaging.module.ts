@@ -5,6 +5,7 @@ import { APP_CONFIG } from '../config/config.module.js';
 import { ScoringModule } from '../scoring/scoring.module.js';
 import { BetEventProcessor } from './bet-event.processor.js';
 import { BetEventsConsumer } from './bet-events.consumer.js';
+import { BET_EVENT_PROCESSOR, OUTCOME_CLASSIFIER, PARKING_PUBLISHER } from './contracts/index.js';
 import { OutcomeClassifier } from './outcome.classifier.js';
 import { ParkingPublisher } from './parking.publisher.js';
 import { buildTopology } from './topology.js';
@@ -41,7 +42,12 @@ import { buildTopology } from './topology.js';
       },
     }),
   ],
-  providers: [BetEventProcessor, BetEventsConsumer, OutcomeClassifier, ParkingPublisher],
-  exports: [BetEventProcessor, OutcomeClassifier],
+  providers: [
+    { provide: BET_EVENT_PROCESSOR, useClass: BetEventProcessor },
+    { provide: OUTCOME_CLASSIFIER, useClass: OutcomeClassifier },
+    { provide: PARKING_PUBLISHER, useClass: ParkingPublisher },
+    BetEventsConsumer,
+  ],
+  exports: [BET_EVENT_PROCESSOR, OUTCOME_CLASSIFIER, PARKING_PUBLISHER],
 })
 export class MessagingModule {}

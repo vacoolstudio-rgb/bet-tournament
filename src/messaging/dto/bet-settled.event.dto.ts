@@ -1,14 +1,14 @@
 import { IsISO8601, IsUUID, Matches } from 'class-validator';
+import type { BetSettledEvent } from '../contracts/index.js';
 import { IsMoneyAmount } from './is-money-amount.decorator.js';
 
 /**
- * `bet.settled` — the event that scores points.
+ * Validator for `bet.settled`.
  *
- * The field set is exactly the contract given in the task; nothing was added,
- * because a consumer that requires a field the producer does not send is a
- * consumer that rejects every message.
+ * The shape itself lives in {@link BetSettledEvent}; this class is that
+ * contract plus the rules that decide whether a payload may enter the domain.
  */
-export class BetSettledEventDto {
+export class BetSettledEventDto implements BetSettledEvent {
   @IsUUID()
   betId: string;
 

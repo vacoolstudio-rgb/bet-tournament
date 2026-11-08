@@ -1,44 +1,34 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import type { OnModuleInit } from '@nestjs/common';
-import { NotImplementedError } from '../common/not-implemented.error.js';
-
-export interface ActiveTournament {
-  readonly id: string;
-  readonly code: string;
-  /** Inclusive. */
-  readonly startsAt: Date;
-  /** Exclusive. */
-  readonly endsAt: Date;
-}
+import type { AppConfig } from '../config/app-config.js';
+import { APP_CONFIG } from '../config/config.module.js';
+import { notImplemented } from '../common/not-implemented.error.js';
+import { TOURNAMENTS_REPOSITORY } from '../database/contracts/index.js';
+import type { TournamentsRepositoryPort } from '../database/contracts/index.js';
+import type { ActiveTournament, TournamentPort } from './scoring.contract.js';
 
 @Injectable()
-export class TournamentService implements OnModuleInit {
+export class TournamentService implements TournamentPort, OnModuleInit {
+  constructor(
+    @Inject(APP_CONFIG) private readonly config: AppConfig,
+    @Inject(TOURNAMENTS_REPOSITORY) private readonly tournaments: TournamentsRepositoryPort,
+  ) {}
+
   /**
    * Makes the configured tournament exist and caches it.
    *
    * The window lives in the config and the row is upserted from it on every
-   * boot, so there is exactly one source of truth. Already-scored points are
-   * never recomputed when the window moves.
+   * boot, so there is exactly one source of truth.
    */
   onModuleInit(): Promise<void> {
-    throw new NotImplementedError('TournamentService.onModuleInit');
+    return notImplemented('TournamentService.onModuleInit', this.config, this.tournaments);
   }
 
-  /** @throws Error when called before the module finished initialising. */
   getActive(): ActiveTournament {
-    throw new NotImplementedError('TournamentService.getActive');
+    return notImplemented('TournamentService.getActive', this.config);
   }
 
-  /**
-   * Whether a settled bet falls inside the tournament.
-   *
-   * `startsAt` is inclusive and `endsAt` is exclusive, so two adjacent
-   * tournaments cannot both count the same bet.
-   *
-   * Only ever consulted for `bet.settled`. Filtering rollbacks by the window
-   * would silently keep points for a bet that was voided outside it.
-   */
   isWithinWindow(_settledAt: Date): boolean {
-    throw new NotImplementedError('TournamentService.isWithinWindow');
+    return notImplemented('TournamentService.isWithinWindow', this.config);
   }
 }
