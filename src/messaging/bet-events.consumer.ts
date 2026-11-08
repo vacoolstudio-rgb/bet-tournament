@@ -91,7 +91,11 @@ export class BetEventsConsumer implements OnModuleInit {
         return 'ack';
       } catch (parkError) {
         // Acknowledging now would drop the payload on the floor. Nacked, it
-        // goes round the retry hop and the delivery limit eventually parks it.
+        // goes round the retry hop and the park is attempted again on the next
+        // delivery, which is what makes a broker hiccup survivable. A parking
+        // destination that stays broken means the message keeps cycling — no
+        // delivery limit rescues it, since the TTL hop republishes it and the
+        // count starts over — and cycling beats losing a settled bet.
         this.logger.error(
           `Could not park ${routingKey}, leaving it to the broker: ${String(parkError)}`,
         );

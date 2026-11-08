@@ -197,9 +197,12 @@ export class AmqpBroker
     try {
       verdict = await handler(this.parse(message), message);
     } catch (error) {
-      // The handler is written not to throw; if it ever does, the message must
-      // not be silently dropped, and the delivery limit will eventually park
-      // it.
+      // The handler is written not to throw; if it ever does, the message
+      // must not be silently dropped, so it goes round the retry hop and is
+      // handled again. Nothing caps that cycle except the attempt counter the
+      // handler itself keeps — a handler broken badly enough to throw on every
+      // delivery will cycle until someone fixes it, which is the better of the
+      // two failures available here.
       this.logger.error(`Handler threw for ${message.fields.routingKey}: ${String(error)}`);
       verdict = 'retry';
     }

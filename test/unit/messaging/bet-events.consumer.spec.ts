@@ -130,8 +130,11 @@ describe('BetEventsConsumer', () => {
 
     const result = await subject.handle(settledEvent(), message());
 
-    // Acking here would drop the payload on the floor. Rejected, it goes round
-    // the retry hop and the delivery limit eventually parks it for us.
+    // Acking here would drop the payload on the floor. Rejected, it goes
+    // round the retry hop and the park is retried on the next delivery. If
+    // parking stays broken it cycles — nothing caps that, see the measurement
+    // in `test/integration/topology.spec.ts` — and cycling is the better
+    // failure: the alternative loses a settled bet.
     expect(result).toBe('retry');
     expect(metrics.recordPark).not.toHaveBeenCalled();
   });

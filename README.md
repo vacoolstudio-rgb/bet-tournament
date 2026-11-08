@@ -215,7 +215,8 @@ Routing keys: `bet.settled` и `bet.rollback`, topic-exchange `bets`.
            │ queue: tournament.bets               │ quorum
            │   prefetch 20                        │
            │   x-dead-letter-exchange: bets.retry │
-           │   x-delivery-limit: 20   (страховка) │
+           │   x-delivery-limit: 20               │ предел переотправок
+           │                                      │ одной доставки
            └───┬──────────────────────────────┬───┘
    ретраябл-    │                             │ отравленное сообщение:
    ошибка:      │                             │ публикуем явно + ack

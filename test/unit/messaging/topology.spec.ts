@@ -44,7 +44,10 @@ describe('buildTopology', () => {
       expect(queue(QUEUE_BETS).options.arguments['x-dead-letter-exchange']).toBe(EXCHANGE_RETRY);
     });
 
-    it('keeps a delivery limit as a backstop against an endless loop', () => {
+    // Caps redelivery within one residency — a handler that dies without
+    // settling, a delivery repeated after a reconnect. Not the retry cycle:
+    // `topology.spec.ts` in the integration suite measures that.
+    it('caps how many times one delivery can be repeated', () => {
       expect(queue(QUEUE_BETS).options.arguments['x-delivery-limit']).toBe(20);
     });
 
