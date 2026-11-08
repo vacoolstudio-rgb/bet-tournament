@@ -12,12 +12,14 @@
 ## Setup commands
 
 ```bash
-cp .env.example .env
-docker compose up -d        # postgres + rabbitmq
+docker compose up -d --wait            # весь стек: инфраструктура + миграции + сервис
+
+cp .env.example .env                   # или для разработки с хоста:
+docker compose up -d postgres rabbitmq
 npm ci
-npm run db:migrate          # миграции; db:revert и db:show тоже есть
+npm run db:migrate                     # db:revert и db:show тоже есть
 npm run build && npm start
-npm run produce -- --list   # сценарии для прогона событий вручную
+npm run produce -- --list              # сценарии для прогона событий вручную
 ```
 
 `npm run start:dev` собирает в watch-режиме и перезапускает `dist`. **Через
@@ -66,4 +68,5 @@ npm run verify            # typecheck + lint + format:check + юнит
 8. **Сообщение, которое не удалось запарковать, не подтверждается.** Иначе тело падает на пол.
 9. **`x-death` читается как сумма `count` по записям главной очереди**, не как число записей и не как первая подходящая. Сообщение покидает очередь по двум причинам (`rejected` и `delivery_limit`), у каждой своя запись.
 10. **Схема — только миграциями**, `synchronize` выключен и остаётся выключенным.
-11. **`UPDATE … RETURNING` через TypeORM заворачивается в CTE и селектится.** Напрямую драйвер возвращает `[строки, количество]`, и тогда `rows.length === 0` не наступает никогда — `markRolledBack` перестаёт сообщать «нечего откатывать», а двойной откат списывает дважды.
+11. **Рантайм-образ удаляет `typescript`, `ts-node` и `@swc/core`** (их тянут `typeorm` и `@nestjs/swagger`, в рантайме они не нужны). Если появится зависимость или путь, которым они нужны **во время работы**, уберите `rm -rf` из Dockerfile — иначе образ упадёт на `MODULE_NOT_FOUND` там, где локально всё работает. Smoke-шаг в CI поднимает именно этот образ и поймает это.
+12. **`UPDATE … RETURNING` через TypeORM заворачивается в CTE и селектится.** Напрямую драйвер возвращает `[строки, количество]`, и тогда `rows.length === 0` не наступает никогда — `markRolledBack` перестаёт сообщать «нечего откатывать», а двойной откат списывает дважды.

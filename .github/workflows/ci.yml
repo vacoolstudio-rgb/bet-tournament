@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A new push supersedes the run it interrupted: the integration job holds real
+# containers, and two of them racing for the same runner buys nothing.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: types, lint, unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # The same major the project is developed on, read from .nvmrc so
+          # there is one place to change it.
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: typecheck
+        run: npm run typecheck
+
+      - name: lint
+        run: npm run lint
+
+      - name: formatting
+        run: npm run format:check
+
+      # With coverage, because the thresholds are part of the contract: the
+      # unit suite answers for the domain, and a drop there should fail the
+      # build rather than be noticed later.
+      - name: unit tests
+        run: npm run test:cov
+
+  integration:
+    name: integration (real Postgres and RabbitMQ)
+    runs-on: ubuntu-latest
+    # Containers, a TTL retry hop and a severed connection to recover from:
+    # this is minutes, not seconds, and that is the point of it.
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      # Testcontainers starts its own Postgres and RabbitMQ against the
+      # runner's Docker daemon; docker-compose.yml is deliberately not used, so
+      # a test run and a local stack can never interfere.
+      - name: integration tests
+        run: npm run test:integration
+
+  image:
+    name: image builds and runs
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # Builds the image and brings up the whole stack: a successful build
+      # proves the Dockerfile compiles, and `--wait` proves the service became
+      # healthy, which means it reached both the database and the broker.
+      - name: build and start the stack
+        run: docker compose up -d --wait
+
+      - name: migrations ran as their own step
+        run: |
+          docker compose logs migrate
+          test "$(docker compose ps -a --status exited --format '{{.Service}}' | grep -c '^migrate$')" = 1
+
+      - name: endpoints answer
+        run: |
+          curl -fsS localhost:3000/health | tee /dev/stderr | grep -q '"status":"ok"'
+          curl -fsS -o /dev/null localhost:3000/api/docs-json
+          curl -fsS localhost:3000/metrics | grep -q bet_events_acknowledged_total
+          curl -fsS localhost:3000/leaderboard | grep -q '"tournament"'
+
+      - name: logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail=200
+
+      - name: stop the stack
+        if: always()
+        run: docker compose down -v

@@ -1,9 +1,13 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "rootDir": "./src",
+    /* `.` rather than `src`, so the CLI entrypoints are compiled too: the
+     * image has to be able to apply migrations, and the production install has
+     * no tsx to run them from source. Output lands in dist/src and dist/tools,
+     * and the relative imports between them resolve unchanged. */
+    "rootDir": ".",
     "sourceMap": true
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "test", "tools", "**/*.spec.ts"]
+  "include": ["src/**/*.ts", "tools/**/*.ts"],
+  "exclude": ["node_modules", "dist", "test", "**/*.spec.ts"]
 }

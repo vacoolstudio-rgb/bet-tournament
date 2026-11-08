@@ -57,6 +57,11 @@ export default defineConfig({
         // which would assert that the mock agrees with itself.
         'src/database/repositories/**',
         'src/database/unit-of-work.ts',
+        // The AMQP layer: a connection, a channel setup function and a consume
+        // loop. The integration suite drives it for real, including severing
+        // the connection to watch it recover; a unit test could only mock
+        // amqplib and assert that the mock agrees with itself.
+        'src/messaging/amqp-broker.ts',
         'src/health/**',
         'src/observability/metrics.controller.ts',
         'src/leaderboard/leaderboard.controller.ts',

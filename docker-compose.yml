@@ -1,10 +1,27 @@
-# Local infrastructure for the tournament service.
+# The local stack.
 #
-#   docker compose up -d      postgres + rabbitmq
+#   docker compose up -d postgres rabbitmq   infrastructure only, for `npm run start:dev`
+#   docker compose up -d                     everything, including the service
 #
-# The service itself runs from the host (`npm run start:dev`) during
-# development; the integration tests do not use this file at all — they boot
-# their own throwaway containers through Testcontainers.
+# The integration tests do not use this file at all — they boot their own
+# throwaway containers through Testcontainers, so a running stack and a test
+# run cannot interfere.
+# Shared by the application and the migration step, so the two can never
+# disagree about where the database is.
+x-app-env: &app-env
+  NODE_ENV: production
+  PORT: '3000'
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  DATABASE_URL: postgresql://tournament:tournament@postgres:5432/tournament
+  RABBITMQ_URL: amqp://tournament:tournament@rabbitmq:5672
+  RABBITMQ_PREFETCH: '20'
+  RABBITMQ_MAX_ATTEMPTS: '5'
+  RABBITMQ_RETRY_TTL_MS: '10000'
+  FX_RATES: '{"EUR":1.08,"GBP":1.27,"UAH":0.024}'
+  TOURNAMENT_CODE: ${TOURNAMENT_CODE:-nov-2026}
+  TOURNAMENT_STARTS_AT: ${TOURNAMENT_STARTS_AT:-2026-11-01T00:00:00.000Z}
+  TOURNAMENT_ENDS_AT: ${TOURNAMENT_ENDS_AT:-2026-12-01T00:00:00.000Z}
+
 services:
   postgres:
     image: postgres:18-alpine
@@ -39,6 +56,33 @@ services:
       interval: 10s
       timeout: 10s
       retries: 10
+
+  # Migrations as their own step, not as a boot side effect: the application
+  # starts only after this exits successfully, and a failed migration stops the
+  # deploy instead of leaving a service running against a schema it does not
+  # expect.
+  migrate:
+    build: .
+    command: ['node', 'dist/tools/db.js', 'migrate']
+    environment:
+      <<: *app-env
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: 'no'
+
+  app:
+    build: .
+    environment:
+      <<: *app-env
+    ports: ['3000:3000']
+    depends_on:
+      postgres: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    # SIGTERM cancels the consumers first, so a delivery in flight is requeued
+    # by the broker rather than lost with the socket.
+    stop_grace_period: 30s
+    restart: unless-stopped
 
 volumes:
   postgres-data:

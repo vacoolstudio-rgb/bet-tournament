@@ -10,8 +10,8 @@
   },
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
-    "start": "node --env-file-if-exists=.env --enable-source-maps dist/main.js",
-    "start:dev": "npm run build -- --watch & node --enable-source-maps --env-file-if-exists=.env --watch dist/main.js",
+    "start": "node --env-file-if-exists=.env --enable-source-maps dist/src/main.js",
+    "start:dev": "npm run build -- --watch & node --enable-source-maps --env-file-if-exists=.env --watch dist/src/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint \"{src,test,tools}/**/*.ts\"",
     "lint:fix": "eslint \"{src,test,tools}/**/*.ts\" --fix",
