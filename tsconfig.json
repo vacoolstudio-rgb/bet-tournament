@@ -1,0 +1,57 @@
+{
+  "compilerOptions": {
+    /* --- Module system ---------------------------------------------------
+     * NestJS 12 ships ESM only (`"type": "module"`, no CommonJS build), so the
+     * package is ESM too and relative imports carry an explicit `.js`.
+     */
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+
+    /* --- Emit ----------------------------------------------------------- */
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "outDir": "./dist",
+    "sourceMap": true,
+    "declaration": false,
+    "removeComments": false,
+    "incremental": true,
+    "tsBuildInfoFile": "./node_modules/.cache/tsconfig.tsbuildinfo",
+
+    /* --- Decorators ------------------------------------------------------
+     * `emitDecoratorMetadata` makes tsc emit `design:paramtypes`, which is how
+     * Nest's IoC container learns what to inject. `useDefineForClassFields`
+     * MUST stay false: with ES2022 class-field semantics the fields are emitted
+     * as `Object.defineProperty(this, x, { value: undefined })`, which wipes
+     * what TypeORM and class-transformer assign through the prototype.
+     */
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "useDefineForClassFields": false,
+
+    /* --- Type checking --------------------------------------------------- */
+    "strict": true,
+    /* Entities and DTOs declare columns the ORM/validator fills in, so the
+     * compiler cannot see the assignment. Everything else stays strict. */
+    "strictPropertyInitialization": false,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    /* An optional property is "may be absent", not "may be present and
+     * undefined": without this, `{ playerId: undefined }` satisfies
+     * `{ playerId?: string }` and an accidental undefined reaches a query. */
+    "exactOptionalPropertyTypes": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+
+    "types": ["node", "vitest/globals"]
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts", "tools/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}
