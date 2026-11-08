@@ -4,6 +4,7 @@ import { DatabaseModule } from './database/database.module.js';
 import { HealthModule } from './health/health.module.js';
 import { LeaderboardModule } from './leaderboard/leaderboard.module.js';
 import { MessagingModule } from './messaging/messaging.module.js';
+import { LoggingModule } from './observability/logging.module.js';
 import { ObservabilityModule } from './observability/observability.module.js';
 import { ScoringModule } from './scoring/scoring.module.js';
 
@@ -15,6 +16,7 @@ import { ScoringModule } from './scoring/scoring.module.js';
 @Module({
   imports: [
     ConfigModule,
+    LoggingModule,
     ObservabilityModule,
     DatabaseModule,
     ScoringModule,

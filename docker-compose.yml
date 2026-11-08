@@ -18,6 +18,11 @@ x-app-env: &app-env
   RABBITMQ_MAX_ATTEMPTS: '5'
   RABBITMQ_RETRY_TTL_MS: '10000'
   FX_RATES: '{"EUR":1.08,"GBP":1.27,"UAH":0.024}'
+  OTEL_SERVICE_NAME: bet-tournament
+  # Traces go to the collector when there is one. Without it the spans are
+  # still created and the context still propagates, so the logs keep their
+  # trace ids — the only thing missing is somewhere to look at the trace.
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
   TOURNAMENT_CODE: ${TOURNAMENT_CODE:-nov-2026}
   TOURNAMENT_STARTS_AT: ${TOURNAMENT_STARTS_AT:-2026-11-01T00:00:00.000Z}
   TOURNAMENT_ENDS_AT: ${TOURNAMENT_ENDS_AT:-2026-12-01T00:00:00.000Z}
@@ -79,6 +84,17 @@ services:
       postgres: { condition: service_healthy }
     restart: 'no'
 
+  # Somewhere to look at a trace. Not part of the service: an OTLP endpoint is
+  # a URL in the config, and in production that is a collector, not this.
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    environment:
+      COLLECTOR_OTLP_ENABLED: 'true'
+    ports:
+      - '16686:16686' # UI — http://localhost:16686
+      - '4318:4318'   # OTLP/HTTP
+    networks: [default]
+
   app:
     build: .
     environment:
@@ -88,6 +104,7 @@ services:
       postgres: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
       migrate: { condition: service_completed_successfully }
+      jaeger: { condition: service_started }
     # SIGTERM cancels the consumers first, so a delivery in flight is requeued
     # by the broker rather than lost with the socket.
     stop_grace_period: 30s

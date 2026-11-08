@@ -67,4 +67,58 @@ describe('MetricsService', () => {
 
     expect((await first.render()).body).not.toContain('duplicate');
   });
+
+  it('labels HTTP requests by method, route pattern and status', async () => {
+    const metrics = new MetricsService();
+
+    metrics.observeHttpRequest({
+      method: 'GET',
+      route: '/leaderboard',
+      status: 200,
+      seconds: 0.012,
+    });
+    metrics.observeHttpRequest({
+      method: 'GET',
+      route: '/leaderboard',
+      status: 400,
+      seconds: 0.002,
+    });
+
+    const { body } = await metrics.render();
+    expect(body).toContain(
+      `${METRIC_NAMES.httpRequests}{method="GET",route="/leaderboard",status="200"} 1`,
+    );
+    expect(body).toContain(
+      `${METRIC_NAMES.httpRequests}{method="GET",route="/leaderboard",status="400"} 1`,
+    );
+    // The histogram is what answers "how slow is the board", and a count
+    // without a sum cannot produce a latency.
+    expect(body).toContain(`${METRIC_NAMES.httpDuration}_sum`);
+    expect(body).toContain(`${METRIC_NAMES.httpDuration}_bucket`);
+  });
+
+  it('exposes process and event-loop metrics', async () => {
+    // Saturation is the half of the picture the service cannot report about
+    // itself: a consumer that has stopped keeping up looks healthy in its own
+    // counters and obvious in the event-loop lag.
+    const metrics = new MetricsService();
+
+    const { body } = await metrics.render();
+    expect(body).toContain('nodejs_eventloop_lag_p99_seconds');
+    expect(body).toContain('nodejs_heap_size_used_bytes');
+    expect(body).toContain('process_resident_memory_bytes');
+  });
+
+  it('keeps its metrics out of the library default registry', async () => {
+    // Two MetricsService instances exist in the integration tests, and a
+    // shared global registry makes the second constructor throw on duplicate
+    // registration — and the suite fail for a reason unrelated to the test.
+    const first = new MetricsService();
+    const second = new MetricsService();
+
+    first.recordAck('scored');
+
+    const { body } = await second.render();
+    expect(body).not.toContain(`${METRIC_NAMES.acknowledged}{reason="scored"} 1`);
+  });
 });

@@ -1,5 +1,9 @@
+// Must stay first: the instrumentations patch amqplib, pg and http as those
+// modules load, and ESM evaluates imports in source order.
+import './observability/tracing.js';
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
+import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module.js';
 import { configureApp } from './app.setup.js';
 import { APP_CONFIG } from './config/config.module.js';
@@ -19,7 +23,11 @@ async function bootstrap(): Promise<void> {
     process.exit(1);
   }
 
-  const app = await NestFactory.create(AppModule);
+  // `bufferLogs` holds the framework's own startup lines until the logger is
+  // installed, so they come out in the same format as everything else instead
+  // of as Nest's columns followed by JSON.
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  app.useLogger(app.get(Logger));
 
   configureApp(app);
 

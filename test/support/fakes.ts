@@ -131,6 +131,7 @@ export function fakeMetrics() {
     recordRetry: vi.fn<MetricsPort['recordRetry']>(),
     recordPark: vi.fn<MetricsPort['recordPark']>(),
     observeProcessing: vi.fn<MetricsPort['observeProcessing']>(),
+    observeHttpRequest: vi.fn<MetricsPort['observeHttpRequest']>(),
     render: vi.fn<MetricsPort['render']>(),
   };
 }

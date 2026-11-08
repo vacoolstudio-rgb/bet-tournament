@@ -105,6 +105,62 @@ npm run replay                # вернуть всё обратно в exchange
 
 Эндпоинты: `/leaderboard`, `/health`, `/metrics`, Swagger на `/api/docs`.
 
+## Наблюдаемость
+
+Три вещи, и каждая отвечает на свой вопрос.
+
+**Метрики** — `/metrics`, формат Prometheus, собственный `Registry` (не
+глобальный: две копии сервиса в одном процессе тестов иначе падают на
+дублирующей регистрации).
+
+| Метрика | Что отвечает |
+|---|---|
+| `bet_events_acknowledged_total{reason}` | сколько событий обработано и чем кончилось: `scored`, `duplicate`, `out_of_window`, `rolled_back`, `nothing_to_roll_back` |
+| `bet_events_retried_total`, `bet_events_parked_total{reason}` | «мы ждём базу» против «мы сдались» — это разные инциденты |
+| `bet_event_processing_seconds` | гистограмма времени обработки события |
+| `http_server_requests_total{method,route,status}` | трафик API по **шаблону** маршрута |
+| `http_server_request_duration_seconds` | латентность API |
+| `nodejs_eventloop_lag_p99_seconds`, `nodejs_heap_size_used_bytes`, `process_*` | насыщение — то, о чём сервис не может доложить сам: консьюмер, который перестал успевать, в своих счётчиках выглядит здоровым |
+
+Маршрут в метку идёт шаблоном (`/leaderboard`), никогда URL: путь, которого нет
+в роутере, управляется тем, кто его запросил, и метка из него — это способ
+нарисовать сколько угодно временных рядов, пока скрейп не ляжет. Непойманный
+путь получает единственное значение `unmatched`.
+
+**Трассы** — OpenTelemetry, OTLP/HTTP. Одна трасса на ставку, через очередь и
+через процессы: `publish bets` → `tournament.bets process` → `START`, `INSERT`,
+`COMMIT`. Сшивается заголовком `traceparent`, который инструментация amqplib
+пишет при публикации и читает при доставке. `docker compose up` поднимает Jaeger,
+UI на [localhost:16686](http://localhost:16686).
+
+```
+publish bets                     bet-tournament-producer  3.8 мс
+  tournament.bets process        bet-tournament          25.1 мс
+    pg-pool.connect                                       0.2 мс
+    pg.query:START tournament                             0.5 мс
+    pg.query:INSERT tournament                            7.8 мс   ← журнал ставки
+    pg.query:INSERT tournament                            6.5 мс   ← агрегат очков
+    pg.query:COMMIT tournament                            2.5 мс
+```
+
+Без коллектора (`OTEL_EXPORTER_OTLP_ENDPOINT` не задан) спаны всё равно
+создаются и контекст всё равно распространяется — то есть `trace_id` в логах
+работает и там, где смотреть трассы негде. `OTEL_ENABLED=false` выключает
+совсем.
+
+**Логи** — pino, одна JSON-строка на запись, с `trace_id` и `span_id` в каждой:
+
+```json
+{"level":30,"context":"ScoringService","trace_id":"4201a103200a821166f48eeef82c9421",
+ "span_id":"81ce361a519fb97f","msg":"Bet c486cbe4… is outside tournament \"nov-2026\"…"}
+```
+
+Это и есть смысл затеи: сервис — несколько реплик на одной очереди, и «что
+случилось с этой ставкой» — вопрос про строки, написанные разными процессами в
+разное время. С общим `trace_id` ответ на него — один поиск, а не вечер
+грепанья. `LOG_PRETTY=true` включает человекочитаемый вывод для локальной
+работы; `x-player-id` в логах запросов замаскирован.
+
 ## Образ
 
 Многостадийный Dockerfile: установка зависимостей, сборка `tsc`, рантайм с
@@ -241,8 +297,8 @@ Configuration is invalid:
 ## Тесты
 
 ```bash
-npm run test              # 328 юнит-тестов, без инфраструктуры
-npm run test:integration  # 121 тестов на настоящих Postgres и RabbitMQ
+npm run test              # 353 юнит-теста, без инфраструктуры
+npm run test:integration  # 125 тестов на настоящих Postgres и RabbitMQ
 npm run verify            # typecheck + lint + формат + юнит
 ```
 

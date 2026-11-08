@@ -10,6 +10,9 @@
  * contracts the consumer validates against, so a change to the wire format
  * breaks the producer at compile time instead of at runtime.
  */
+// Tracing first, so the publish carries `traceparent` and a hand-driven
+// event belongs to the same trace as the consumer that handles it.
+import { shutdownTracing } from '../src/observability/tracing.js';
 import { randomUUID } from 'node:crypto';
 import amqp from 'amqp-connection-manager';
 import type { Channel } from 'amqplib';
@@ -424,8 +427,11 @@ if (
   process.argv[1] !== undefined &&
   import.meta.url.endsWith(process.argv[1].split('/').pop() ?? '')
 ) {
-  main().catch((error: unknown) => {
-    console.error(error);
-    process.exit(1);
-  });
+  main()
+    .then(() => shutdownTracing())
+    .catch(async (error: unknown) => {
+      console.error(error);
+      await shutdownTracing();
+      process.exit(1);
+    });
 }

@@ -178,6 +178,13 @@ export class AmqpBroker
         // A cancelled consumer delivers null; there is nothing to settle.
         if (message === null) return;
 
+        // Detached on purpose: prefetch is the concurrency limit, so the
+        // callback must return before the next delivery can arrive. The
+        // delivery's trace context survives anyway — it is current when
+        // `settle` is called, and AsyncLocalStorage carries it across every
+        // await inside, which is what puts the queries and the log lines of
+        // one bet in the trace that started where the event was published.
+        // `test/integration/tracing.spec.ts` holds that property down.
         void this.settle(channel, message, handler);
       },
       { noAck: false },

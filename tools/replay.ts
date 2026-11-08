@@ -13,6 +13,9 @@
  * a short drain run by a human, and a tool that silently reconnects and starts
  * again is not what anyone wants while moving messages around by hand.
  */
+// Tracing first, so the publish carries `traceparent` and a hand-driven
+// event belongs to the same trace as the consumer that handles it.
+import { shutdownTracing } from '../src/observability/tracing.js';
 import { connect } from 'amqplib';
 import type { ConfirmChannel, GetMessage } from 'amqplib';
 import { loadConfig } from '../src/config/app-config.js';
@@ -189,8 +192,11 @@ if (
   process.argv[1]?.endsWith('replay.ts') === true ||
   process.argv[1]?.endsWith('replay.js') === true
 ) {
-  main().catch((error: unknown) => {
-    console.error(error);
-    process.exit(1);
-  });
+  main()
+    .then(() => shutdownTracing())
+    .catch(async (error: unknown) => {
+      console.error(error);
+      await shutdownTracing();
+      process.exit(1);
+    });
 }

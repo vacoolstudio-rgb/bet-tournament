@@ -22,6 +22,16 @@ export interface MetricsPort {
   /** End-to-end handling time of one delivery, in seconds. */
   observeProcessing(seconds: number): void;
 
+  /**
+   * One finished HTTP request.
+   *
+   * `route` is the pattern (`/leaderboard`), never the URL: a label built from
+   * the path would grow a new time series per distinct query string, and a
+   * metric whose cardinality follows traffic is a metric that takes the
+   * monitoring down with it.
+   */
+  observeHttpRequest(request: HttpRequestOutcome): void;
+
   /** The scrape response: Prometheus text format and its exact content type. */
   render(): Promise<MetricsSnapshot>;
 }
@@ -36,7 +46,16 @@ export const METRIC_NAMES = {
   retried: 'bet_events_retried_total',
   parked: 'bet_events_parked_total',
   processing: 'bet_event_processing_seconds',
+  httpRequests: 'http_server_requests_total',
+  httpDuration: 'http_server_request_duration_seconds',
 } as const;
+
+export interface HttpRequestOutcome {
+  readonly method: string;
+  readonly route: string;
+  readonly status: number;
+  readonly seconds: number;
+}
 
 export interface MetricsSnapshot {
   /** e.g. `text/plain; version=0.0.4; charset=utf-8` — Prometheus is picky. */
