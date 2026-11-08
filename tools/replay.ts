@@ -12,6 +12,12 @@
  * Plain amqplib rather than the reconnecting manager the service uses: this is
  * a short drain run by a human, and a tool that silently reconnects and starts
  * again is not what anyone wants while moving messages around by hand.
+ *
+ * Known rough edge, measured rather than guessed: if the broker closes the
+ * channel mid-drain — the target exchange missing, say — this hangs instead of
+ * failing, because the pending confirm is never settled. It prints no summary
+ * line, so there is no chance of mistaking it for success, and the remedy is
+ * Ctrl-C. Worth knowing before you wait on it.
  */
 // Tracing first, so the publish carries `traceparent` and a hand-driven
 // event belongs to the same trace as the consumer that handles it.
@@ -47,6 +53,9 @@ export const HEADER_REPLAYED_AT = 'x-replayed-at';
 const KNOWN_KEYS = new Set<string>([ROUTING_KEY_SETTLED, ROUTING_KEY_ROLLBACK]);
 
 export interface ReplayOptions {
+  /** Broker to drain. Passed in rather than read from the environment here, so
+   * the drain can be exercised against a throwaway broker. */
+  readonly url: string;
   readonly limit: number;
   readonly dryRun: boolean;
 }
@@ -99,9 +108,17 @@ const asParked = (message: GetMessage): ParkedMessage => ({
   body: message.content.toString('utf8'),
 });
 
-async function drain(
+/**
+ * Moves what it can, one message at a time.
+ *
+ * Exported for tests: the ordering inside — publish, wait for the broker to
+ * confirm its copy, acknowledge the original only then — is the whole safety
+ * of the tool, and it only matters when the publish fails, which a healthy
+ * broker never does. A fake channel can fail on demand.
+ */
+export async function drain(
   channel: ConfirmChannel,
-  { limit, dryRun }: ReplayOptions,
+  { limit, dryRun }: Pick<ReplayOptions, 'limit' | 'dryRun'>,
 ): Promise<ReplaySummary> {
   let replayed = 0;
   let skipped = 0;
@@ -155,8 +172,7 @@ async function drain(
 }
 
 export async function replay(options: ReplayOptions): Promise<ReplaySummary> {
-  const config = loadConfig();
-  const connection = await connect(config.rabbit.url);
+  const connection = await connect(options.url);
 
   try {
     const channel = await connection.createConfirmChannel();
@@ -177,9 +193,10 @@ async function main(): Promise<void> {
     argv.find((argument) => argument.startsWith('--limit='))?.split('=')[1] ?? 10_000,
   );
   const dryRun = argv.includes('--dry-run');
+  const { rabbit } = loadConfig();
 
   console.log(dryRun ? 'Парковка содержит:' : 'Возвращаю запаркованные сообщения:');
-  const { replayed, skipped } = await replay({ limit, dryRun });
+  const { replayed, skipped } = await replay({ url: rabbit.url, limit, dryRun });
 
   console.log(
     dryRun

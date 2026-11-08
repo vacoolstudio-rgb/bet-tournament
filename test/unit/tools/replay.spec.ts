@@ -1,4 +1,5 @@
-import { HEADER_REPLAYED_AT, headersFor, routingKeyFor } from '../../../tools/replay.js';
+import type { ConfirmChannel } from 'amqplib';
+import { drain, HEADER_REPLAYED_AT, headersFor, routingKeyFor } from '../../../tools/replay.js';
 import {
   HEADER_PARK_ATTEMPTS,
   HEADER_PARK_REASON,
@@ -63,5 +64,77 @@ describe('headersFor', () => {
 
   it('stamps the replay, so a message that comes back twice says so', () => {
     expect(typeof headersFor(parked({}))[HEADER_REPLAYED_AT]).toBe('string');
+  });
+});
+
+describe('drain', () => {
+  /** A confirm channel that can be told to fail its confirms. */
+  function fakeChannel(messages: number, confirmsFail = false) {
+    const queue = Array.from({ length: messages }, (_, index) => ({
+      content: Buffer.from(`{"n":${index}}`),
+      properties: { headers: { [HEADER_PARK_ROUTING_KEY]: 'bet.settled' } },
+      fields: { deliveryTag: index + 1 },
+    }));
+    const calls: string[] = [];
+
+    return {
+      calls,
+      channel: {
+        get: vi.fn(() => Promise.resolve(queue.shift() ?? false)),
+        publish: vi.fn(() => {
+          calls.push('publish');
+
+          return true;
+        }),
+        waitForConfirms: vi.fn(() => {
+          calls.push('confirm');
+
+          return confirmsFail
+            ? Promise.reject(new Error('broker refused the publish'))
+            : Promise.resolve();
+        }),
+        ack: vi.fn(() => void calls.push('ack')),
+        nackAll: vi.fn(() => void calls.push('nackAll')),
+      },
+    };
+  }
+
+  it('acknowledges the parked copy only after the broker confirms the new one', async () => {
+    // The order is the safety: a message acknowledged before the publish is
+    // confirmed has left the parking queue on the strength of a promise the
+    // broker never made.
+    const { channel, calls } = fakeChannel(2);
+
+    await drain(channel as unknown as ConfirmChannel, { limit: 10, dryRun: false });
+
+    expect(calls).toEqual(['publish', 'confirm', 'ack', 'publish', 'confirm', 'ack']);
+  });
+
+  it('never acknowledges a message the broker would not take', async () => {
+    // Which is the situation the ordering exists for, and the one a healthy
+    // broker never produces — so it is arranged here rather than hoped for.
+    const { channel, calls } = fakeChannel(1, true);
+
+    await expect(
+      drain(channel as unknown as ConfirmChannel, { limit: 10, dryRun: false }),
+    ).rejects.toThrow('broker refused the publish');
+
+    expect(channel.ack).not.toHaveBeenCalled();
+    expect(calls).toEqual(['publish', 'confirm']);
+  });
+
+  it('acknowledges nothing at all on a dry run', async () => {
+    const { channel } = fakeChannel(3);
+
+    const summary = await drain(channel as unknown as ConfirmChannel, {
+      limit: 10,
+      dryRun: true,
+    });
+
+    expect(summary).toEqual({ replayed: 3, skipped: 0 });
+    expect(channel.publish).not.toHaveBeenCalled();
+    expect(channel.ack).not.toHaveBeenCalled();
+    // Held while the queue was read, handed back in one step at the end.
+    expect(channel.nackAll).toHaveBeenCalledWith(true);
   });
 });

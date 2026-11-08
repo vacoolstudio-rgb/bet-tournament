@@ -192,3 +192,11 @@ export async function unacknowledged(managementUrl: string, queue: string): Prom
 
   return body.messages_unacknowledged ?? 0;
 }
+
+/** Deletes an exchange, so a publish to it fails the way a misconfigured broker does. */
+export async function deleteExchange(managementUrl: string, exchange: string): Promise<void> {
+  const response = await management(managementUrl, `exchanges/%2F/${exchange}`, 'DELETE');
+  if (!response.ok && response.status !== 404) {
+    throw new Error(`management API said ${response.status} deleting ${exchange}`);
+  }
+}
