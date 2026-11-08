@@ -290,7 +290,34 @@ describe('the operational endpoints', () => {
     expect(response.text).toContain('bet_events_acknowledged_total');
   });
 
-  it('documents the API', async () => {
-    await app.http.get('/api/docs-json').expect(200);
+  it('documents the API, parameters included', async () => {
+    // Found by validating a live response against the published document: the
+    // response matched, and `limit` was not in the document at all. Swagger
+    // builds query parameters from its own metadata rather than from the
+    // validators, so an endpoint can validate a parameter it never documents.
+    const { body } = await app.http.get('/api/docs-json').expect(200);
+    const route = (
+      body as {
+        paths: Record<
+          string,
+          {
+            get: {
+              parameters?: { name: string; in: string }[];
+              responses: Record<string, unknown>;
+            };
+          }
+        >;
+      }
+    ).paths['/leaderboard']?.get;
+    if (route === undefined) throw new Error('the document has no /leaderboard route');
+    const named = (location: string): string[] =>
+      (route.parameters ?? [])
+        .filter((parameter) => parameter.in === location)
+        .map((parameter) => parameter.name);
+
+    expect(named('query')).toContain('limit');
+    expect(named('header')).toContain('X-Player-Id');
+    // Both outcomes a client has to handle.
+    expect(Object.keys(route.responses)).toEqual(expect.arrayContaining(['200', '400']));
   });
 });
