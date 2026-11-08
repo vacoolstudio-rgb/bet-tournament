@@ -104,7 +104,7 @@ export class ScoringService implements ScoringPort {
     const { id: tournamentId } = this.tournament.getActive();
 
     return this.unitOfWork.withTransaction(async (scope) => {
-      const voided = await this.bets.markRolledBack({
+      let voided = await this.bets.markRolledBack({
         scope,
         tournamentId,
         betId: command.betId,
@@ -118,8 +118,27 @@ export class ScoringService implements ScoringPort {
           playerId: command.playerId,
         });
 
-        // False means a row appeared in between, so the bet is already void.
-        return tombstoned ? { status: 'tombstoned' } : { status: 'duplicate' };
+        if (tombstoned) return { status: 'tombstoned' };
+
+        // The tombstone hit a row that was not there a statement ago, and
+        // there is only one way that happens: the settle committed while this
+        // transaction was deciding there was nothing to void. Its insert was
+        // invisible to the update — an uncommitted row is not found, it does
+        // not block — and by the time the tombstone conflicted, the points had
+        // been credited.
+        //
+        // So look again. Under read committed the next statement sees a fresh
+        // snapshot, and one retry is enough: the row is committed now, and it
+        // is either settled (void it) or already void (a genuine duplicate).
+        // Treating the conflict as a duplicate, which is what it looks like,
+        // would leave those points credited forever.
+        voided = await this.bets.markRolledBack({
+          scope,
+          tournamentId,
+          betId: command.betId,
+        });
+
+        if (voided === null) return { status: 'duplicate' };
       }
 
       // The journal decides whose points these were. If the event disagrees,

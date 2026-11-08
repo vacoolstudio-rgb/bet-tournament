@@ -169,6 +169,19 @@ describe('the scenarios that make a claim checkable', () => {
     }).toThrow();
   });
 
+  it('board gives every player their own id and their own score', () => {
+    // The only scenario that can show a top-100: the rest are about a single
+    // player, so without it the cap and the ordering are undemonstrable with
+    // the shipped producer.
+    const messages = plan('board', 120);
+    const players = messages.map((message) => payloadOf(message).playerId);
+    const amounts = messages.map((message) => Number(payloadOf(message).winAmount));
+
+    expect(new Set(players).size).toBe(120);
+    expect(new Set(amounts).size).toBe(120);
+    expect(amounts).toEqual([...amounts].sort((a, b) => a - b));
+  });
+
   it('load honours the count it was asked for', () => {
     expect(plan('load', 250)).toHaveLength(250);
   });

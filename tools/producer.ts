@@ -34,6 +34,7 @@ export type ScenarioName =
   | 'out-of-window'
   | 'rollback-stale-timestamp'
   | 'malformed'
+  | 'board'
   | 'load';
 
 export interface Scenario {
@@ -71,6 +72,10 @@ export const scenarios: readonly Scenario[] = [
     proves: 'a rollback whose own settledAt falls outside the window still removes the points',
   },
   { name: 'malformed', proves: 'an invalid payload is parked without retries' },
+  {
+    name: 'board',
+    proves: 'the leaderboard is capped at a hundred rows and ordered by points',
+  },
   { name: 'load', proves: 'throughput and leaderboard latency under volume' },
 ];
 
@@ -247,6 +252,22 @@ export function planScenario({ scenario, count, window }: ProducerOptions): Plan
 
     case 'malformed':
       return [{ kind: 'raw', routingKey: ROUTING_KEY_SETTLED, body: '{"betId": not json' }];
+
+    case 'board': {
+      // One bet per player, each worth a different amount, so the ordering is
+      // unambiguous and `--count` above a hundred shows the cap. Without this
+      // the shipped producer could not demonstrate the top-100 at all: every
+      // other scenario is about one player.
+      return Array.from({ length: count }, (_, index) =>
+        settled(
+          bet(w, {
+            playerId: randomUUID(),
+            currency: 'USD',
+            winAmount: `${index + 1}.0000`,
+          }),
+        ),
+      );
+    }
 
     case 'load': {
       const player = randomUUID();

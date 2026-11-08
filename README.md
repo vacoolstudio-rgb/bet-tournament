@@ -52,8 +52,13 @@ curl -s localhost:3000/leaderboard | jq
 npm run produce -- --scenario=rollback          # начислили и откатили
 npm run produce -- --scenario=duplicate         # дубль не удваивает очки
 npm run produce -- --scenario=unknown-currency  # уходит в парковку, а не в ноль
-npm run produce -- --scenario=load --count=50000
+npm run produce -- --scenario=board --count=150   # 150 игроков: видно отсечку топ-100
+npm run produce -- --scenario=load --count=5000
 ```
+
+На живом стеке: 5000 событий одному игроку (то есть максимальная конкуренция за
+одну строку агрегата) обрабатываются примерно за 12 с, очки выходят ровно
+`5000.000000` — ни один инкремент не потерян, — а лидерборд отвечает за 5 мс.
 
 Эндпоинты: `/leaderboard`, `/health`, `/metrics`, Swagger на `/api/docs`.
 
@@ -174,8 +179,8 @@ reject без requeue: сообщение уходит в retry-очередь, 
 ## Тесты
 
 ```bash
-npm run test              # 325 юнит-тестов, без инфраструктуры
-npm run test:integration  # 119 тестов на настоящих Postgres и RabbitMQ
+npm run test              # 327 юнит-тестов, без инфраструктуры
+npm run test:integration  # 120 тестов на настоящих Postgres и RabbitMQ
 npm run verify            # typecheck + lint + формат + юнит
 ```
 

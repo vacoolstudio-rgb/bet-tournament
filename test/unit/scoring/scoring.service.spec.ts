@@ -254,11 +254,32 @@ describe('ScoringService.rollback', () => {
     expect(scores.decrementCounted).not.toHaveBeenCalled();
   });
 
+  it('voids a bet that got settled while it was deciding there was nothing to void', async () => {
+    // The race acceptance found. An uncommitted insert is invisible to the
+    // update rather than blocking it, so the rollback can see no settled bet,
+    // then have its tombstone conflict with the settle that committed in
+    // between. Reading that conflict as "already void" — which is what it
+    // looks like — leaves the points credited forever.
+    const { service, bets, scores } = subject();
+    bets.markRolledBack
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ playerId: PLAYER_ID, pointsAwarded: '11.232000' });
+    bets.insertTombstone.mockResolvedValue(false);
+    bets.latestScoringSettledAt.mockResolvedValue(null);
+
+    const outcome = await service.rollback({ betId: BET_ID, playerId: PLAYER_ID });
+
+    expect(outcome).toEqual({ status: 'rolled_back', pointsRemoved: '11.232000' });
+    expect(scores.debit).toHaveBeenCalledWith(
+      expect.objectContaining({ playerId: PLAYER_ID, points: '11.232000' }),
+    );
+  });
+
   it('treats a second rollback as a duplicate, not an error', async () => {
     const { service, bets, scores } = subject();
+    // Null on both looks: the row exists and is already void, so neither the
+    // first update nor the retry after the tombstone conflict finds anything.
     bets.markRolledBack.mockResolvedValue(null);
-    // The row exists and is already void, so the tombstone insert finds a
-    // conflict.
     bets.insertTombstone.mockResolvedValue(false);
 
     await expect(service.rollback({ betId: BET_ID, playerId: PLAYER_ID })).resolves.toEqual({

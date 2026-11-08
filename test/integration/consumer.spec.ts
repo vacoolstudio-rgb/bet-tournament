@@ -223,6 +223,48 @@ describe('rolling bets back', () => {
   });
 });
 
+describe('when a settle and its rollback arrive together', () => {
+  it('still ends at zero, however the two interleave', async () => {
+    // Published back to back with no gap, which is exactly what a producer
+    // replaying its log does. Both are prefetched and handled concurrently, so
+    // the rollback can run its update before the settle's insert is visible —
+    // an uncommitted row is not found and does not block — and then have its
+    // tombstone conflict with the settle that committed in between.
+    //
+    // Found by driving the service by hand rather than by any test: the
+    // conflict looks exactly like "already void", and reading it that way
+    // leaves the points credited forever. The unit suite pins the fix
+    // deterministically; this is the net that catches the real race, so it
+    // runs the pair many times over.
+    const pairs = 15;
+
+    for (let index = 0; index < pairs; index += 1) {
+      const betId = `99999999-9999-4999-8999-${String(index).padStart(12, '0')}`;
+      settle(settledEvent({ betId }));
+      rollback(rollbackEvent({ betId }));
+    }
+
+    await expect
+      .poll(
+        async () => {
+          const [row] = await dataSource.query<{ count: string }[]>(
+            `SELECT count(*) FROM bets WHERE status = 'rolled_back'`,
+          );
+
+          return Number(row?.count ?? 0);
+        },
+        { timeout: 30_000 },
+      )
+      .toBe(pairs);
+
+    // Every bet void, so every point given back: the aggregate is exactly
+    // where it started, with no row left counting a bet that no longer exists.
+    const row = await score();
+    expect(row?.points).toBe('0.000000');
+    expect(row?.bets_counted).toBe(0);
+  }, 60_000);
+});
+
 describe('messages that can never succeed', () => {
   async function parked(): Promise<Record<string, unknown>> {
     const message = await broker.take(QUEUE_PARKED, 10_000);
