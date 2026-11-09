@@ -2,8 +2,12 @@
   "name": "bet-tournament",
   "version": "1.0.0",
   "description": "Betting tournament service — points from settled bets, top-100 leaderboard",
-  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vacoolstudio-rgb/bet-tournament.git"
+  },
   "license": "UNLICENSED",
+  "private": true,
   "type": "module",
   "engines": {
     "node": ">=24"
@@ -83,5 +87,9 @@
     "typescript-eslint": "^8.72.1",
     "unplugin-swc": "^2.0.0",
     "vitest": "^4.1.12"
+  },
+  "overrides": {
+    "glob": "^14.0.4",
+    "minimatch": "^11.0.5"
   }
 }
