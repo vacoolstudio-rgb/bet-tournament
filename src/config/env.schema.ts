@@ -14,6 +14,30 @@ const booleanFromEnv = z
   .transform((value) => value === 'true');
 
 /**
+ * A required variable that says which one it is when it is missing.
+ *
+ * Zod's own text for an absent value is "Invalid input: expected string,
+ * received undefined", repeated once per variable. The path is printed
+ * alongside it, so the name is not lost — but the sentence carries none of the
+ * information, and six of them in a column is what someone sees the first time
+ * they run this after a clone.
+ */
+function required(name: string) {
+  return z.string({ error: `${name} is required` });
+}
+
+/** An instant, named in its own error messages. */
+function isoInstant(name: string) {
+  return z
+    .string({ error: `${name} is required, as an ISO-8601 instant like 2026-11-01T00:00:00Z` })
+    .min(1, `${name} must not be empty`)
+    .refine((value) => !Number.isNaN(new Date(value).getTime()), {
+      error: `${name} must be an ISO-8601 instant like 2026-11-01T00:00:00Z`,
+    })
+    .transform((value) => new Date(value));
+}
+
+/**
  * FX rates: units of USD per 1 unit of the currency.
  *
  * Kept as strings, not numbers: a JSON number is a float, and these values are
@@ -23,8 +47,7 @@ const booleanFromEnv = z
  * USD must not appear — its rate is 1 by definition and a configurable "1"
  * is a configurable way to get it wrong.
  */
-const fxRatesSchema = z
-  .string()
+const fxRatesSchema = required('FX_RATES')
   .transform((raw, ctx): unknown => {
     try {
       return JSON.parse(raw);
@@ -67,22 +90,29 @@ export const envSchema = z
      */
     DATABASE_POOL_MAX: z.coerce.number().int().positive().max(1000).optional(),
 
-    DATABASE_URL: z
-      .string()
-      .regex(/^postgres(ql)?:\/\//, 'DATABASE_URL must start with postgres:// or postgresql://'),
+    DATABASE_URL: required('DATABASE_URL').regex(
+      /^postgres(ql)?:\/\//,
+      'DATABASE_URL must start with postgres:// or postgresql://',
+    ),
 
-    RABBITMQ_URL: z
-      .string()
-      .regex(/^amqps?:\/\//, 'RABBITMQ_URL must start with amqp:// or amqps://'),
+    RABBITMQ_URL: required('RABBITMQ_URL').regex(
+      /^amqps?:\/\//,
+      'RABBITMQ_URL must start with amqp:// or amqps://',
+    ),
     RABBITMQ_PREFETCH: z.coerce.number().int().positive().max(1000).default(20),
     RABBITMQ_MAX_ATTEMPTS: z.coerce.number().int().positive().max(100).default(5),
     RABBITMQ_RETRY_TTL_MS: z.coerce.number().int().positive().default(10_000),
 
     FX_RATES: fxRatesSchema,
 
-    TOURNAMENT_CODE: z.string().min(1).max(64),
-    TOURNAMENT_STARTS_AT: z.coerce.date(),
-    TOURNAMENT_ENDS_AT: z.coerce.date(),
+    TOURNAMENT_CODE: required('TOURNAMENT_CODE').min(1).max(64),
+    // Required-then-coerced, rather than `z.coerce.date()` alone: coercion
+    // turns a missing variable into an Invalid Date, and the message for that
+    // is "expected date, received Date", which tells a reader nothing. The
+    // string check runs first, so an absent variable says it is absent and a
+    // misspelled one says what was expected.
+    TOURNAMENT_STARTS_AT: isoInstant('TOURNAMENT_STARTS_AT'),
+    TOURNAMENT_ENDS_AT: isoInstant('TOURNAMENT_ENDS_AT'),
   })
   .refine((env) => env.TOURNAMENT_ENDS_AT.getTime() > env.TOURNAMENT_STARTS_AT.getTime(), {
     message: 'TOURNAMENT_ENDS_AT must be after TOURNAMENT_STARTS_AT',

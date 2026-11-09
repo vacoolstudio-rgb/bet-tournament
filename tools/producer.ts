@@ -17,6 +17,7 @@ import { randomUUID } from 'node:crypto';
 import amqp from 'amqp-connection-manager';
 import type { Channel } from 'amqplib';
 import { loadConfig } from '../src/config/app-config.js';
+import { reportConfigurationError } from '../src/config/report-configuration-error.js';
 import type { BetRollbackEvent, BetSettledEvent } from '../src/messaging/contracts/index.js';
 import {
   buildTopology,
@@ -430,7 +431,10 @@ if (
   main()
     .then(() => shutdownTracing())
     .catch(async (error: unknown) => {
-      console.error(error);
+      // A missing variable is the most likely way this fails for someone
+      // running it the first time, and it deserves two lines rather than a
+      // stack trace with the issues dumped again below it.
+      if (!reportConfigurationError(error)) console.error(error);
       await shutdownTracing();
       process.exit(1);
     });
