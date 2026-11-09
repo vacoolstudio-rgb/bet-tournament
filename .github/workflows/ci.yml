@@ -42,7 +42,13 @@ jobs:
       # unit suite answers for the domain, and a drop there should fail the
       # build rather than be noticed later.
       - name: unit tests
-        run: npm run test:cov
+        run: npm run test:cov -- --reporter=json --reporter=default --outputFile=/tmp/unit.json
+
+      # The README says how many tests there are, and that is a number which
+      # goes stale on the next commit — it already had, twice. Checked where it
+      # is produced rather than remembered.
+      - name: the README's test count is the real one
+        run: node --import tsx tools/check-doc-counts.ts /tmp/unit.json "юнит-тест"
 
   integration:
     name: integration (real Postgres and RabbitMQ)
@@ -64,7 +70,12 @@ jobs:
       # runner's Docker daemon; docker-compose.yml is deliberately not used, so
       # a test run and a local stack can never interfere.
       - name: integration tests
-        run: npm run test:integration
+        run: npm run test:integration -- --reporter=json --reporter=default --outputFile=/tmp/integration.json
+
+      - name: the README's integration count is the real one
+        run: |
+          node --import tsx tools/check-doc-counts.ts /tmp/integration.json \
+            "тестов на настоящих Postgres и RabbitMQ"
 
   image:
     name: image builds and runs
