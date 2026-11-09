@@ -17,13 +17,6 @@ import type {
 /** What a player with nothing has, at the scale the column stores. */
 const NO_POINTS = toColumn(new Decimal(0), POINTS_SCALE);
 
-function statusOf(now: Date, startsAt: Date, endsAt: Date): TournamentStatus {
-  if (now.getTime() < startsAt.getTime()) return 'pending';
-  if (now.getTime() < endsAt.getTime()) return 'active';
-
-  return 'finished';
-}
-
 @Injectable()
 export class LeaderboardService implements LeaderboardPort {
   constructor(
@@ -44,14 +37,14 @@ export class LeaderboardService implements LeaderboardPort {
     const now = new Date();
 
     const rows = await this.scores.top({ tournamentId: active.id, limit });
-    const top = rows.map((row, index) => toEntry(row, index + 1));
+    const top = rows.map((row, index) => this.toEntry(row, index + 1));
 
     return {
       tournament: {
         code: active.code,
         startsAt: active.startsAt.toISOString(),
         endsAt: active.endsAt.toISOString(),
-        status: statusOf(now, active.startsAt, active.endsAt),
+        status: this.statusOf(now, active.startsAt, active.endsAt),
       },
       top,
       me: playerId === undefined ? null : await this.standingOf(active.id, playerId, top),
@@ -94,17 +87,25 @@ export class LeaderboardService implements LeaderboardPort {
 
     return { ...standing, rank };
   }
-}
 
-function toEntry(row: PlayerScoreRow, rank: number): LeaderboardEntry {
-  return {
-    rank,
-    playerId: row.playerId,
-    // Whole points for the headline, exact points for the ordering. Two
-    // players can show the same number and sit on different rows, and
-    // `pointsExact` is what explains it.
-    points: floorPoints(row.points),
-    pointsExact: row.points,
-    betsCounted: row.betsCounted,
-  };
+  /** Derived from the window and the current instant, never stored. */
+  private statusOf(now: Date, startsAt: Date, endsAt: Date): TournamentStatus {
+    if (now.getTime() < startsAt.getTime()) return 'pending';
+    if (now.getTime() < endsAt.getTime()) return 'active';
+
+    return 'finished';
+  }
+
+  private toEntry(row: PlayerScoreRow, rank: number): LeaderboardEntry {
+    return {
+      rank,
+      playerId: row.playerId,
+      // Whole points for the headline, exact points for the ordering. Two
+      // players can show the same number and sit on different rows, and
+      // `pointsExact` is what explains it.
+      points: floorPoints(row.points),
+      pointsExact: row.points,
+      betsCounted: row.betsCounted,
+    };
+  }
 }

@@ -1,27 +1,7 @@
 import { ZodError } from 'zod';
 import type { Env } from './env.schema.js';
+import { ConfigurationError } from '../common/errors.js';
 import { envSchema } from './env.schema.js';
-
-/**
- * A configuration error, phrased for whoever is looking at the logs.
- *
- * Raised instead of letting the ZodError out, because the raw one is forty
- * lines of JSON — `code`, `expected`, `received`, a `path` array per issue —
- * printed by the framework's exception handler after "Starting Nest
- * application...", which makes a missing environment variable look like the
- * framework crashed.
- */
-export class ConfigurationError extends Error {
-  constructor(readonly issues: readonly { path: string; message: string }[]) {
-    super(
-      [
-        'Configuration is invalid:',
-        ...issues.map(({ path, message }) => `  ${path}: ${message}`),
-      ].join('\n'),
-    );
-    this.name = 'ConfigurationError';
-  }
-}
 
 /** Connections kept aside for reads and the health check. */
 const POOL_SPARE = 5;

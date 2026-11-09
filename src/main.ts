@@ -7,7 +7,8 @@ import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module.js';
 import { configureApp } from './app.setup.js';
 import { APP_CONFIG } from './config/config.module.js';
-import { ConfigurationError, loadConfig } from './config/app-config.js';
+import { ConfigurationError } from './common/errors.js';
+import { loadConfig } from './config/app-config.js';
 import type { AppConfig } from './config/app-config.js';
 
 async function bootstrap(): Promise<void> {

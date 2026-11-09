@@ -18,13 +18,6 @@ interface ScoreRow {
   last_scored_at: Date | null;
 }
 
-const toRow = (row: ScoreRow): PlayerScoreRow => ({
-  playerId: row.player_id,
-  points: row.points,
-  betsCounted: row.bets_counted,
-  lastScoredAt: row.last_scored_at,
-});
-
 /**
  * The canonical order of the board, written once.
  *
@@ -144,7 +137,7 @@ export class PlayerScoresRepository implements PlayerScoresRepositoryPort {
       [tournamentId, limit],
     );
 
-    return rows.map(toRow);
+    return rows.map((row) => this.toRow(row));
   }
 
   async findOne({ tournamentId, playerId }: PlayerKey): Promise<PlayerScoreRow | null> {
@@ -156,7 +149,7 @@ export class PlayerScoresRepository implements PlayerScoresRepositoryPort {
     );
     const row = rows[0];
 
-    return row === undefined ? null : toRow(row);
+    return row === undefined ? null : this.toRow(row);
   }
 
   /**
@@ -185,5 +178,15 @@ export class PlayerScoresRepository implements PlayerScoresRepositoryPort {
     );
 
     return Number(rows[0]?.rank ?? 1);
+  }
+
+  /** The aggregate row as the domain reads it. */
+  private toRow(row: ScoreRow): PlayerScoreRow {
+    return {
+      playerId: row.player_id,
+      points: row.points,
+      betsCounted: row.bets_counted,
+      lastScoredAt: row.last_scored_at,
+    };
   }
 }

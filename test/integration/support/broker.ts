@@ -200,3 +200,13 @@ export async function deleteExchange(managementUrl: string, exchange: string): P
     throw new Error(`management API said ${response.status} deleting ${exchange}`);
   }
 }
+
+/** How many consumers the broker currently reports on a queue. */
+export async function consumerCount(managementUrl: string, queue: string): Promise<number> {
+  const response = await management(managementUrl, `queues/%2F/${queue}`);
+  if (!response.ok) throw new Error(`management API said ${response.status} for ${queue}`);
+
+  const body = (await response.json()) as { consumers?: number };
+
+  return body.consumers ?? 0;
+}

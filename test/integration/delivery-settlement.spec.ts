@@ -7,7 +7,12 @@ import {
   ROUTING_KEY_SETTLED,
 } from '../../src/messaging/topology.js';
 import { resetBroker, testConfig } from './support/app.js';
-import { killConnection, listConnections, unacknowledged } from './support/broker.js';
+import {
+  consumerCount,
+  killConnection,
+  listConnections,
+  unacknowledged,
+} from './support/broker.js';
 import type { Broker } from './support/broker.js';
 import { settledEvent } from '../support/builders.js';
 import { inject } from 'vitest';
@@ -48,6 +53,26 @@ beforeAll(async () => {
  * file shared one consumer and the third test failed for reasons that had
  * nothing to do with it.
  */
+/**
+ * Waits until nothing else is reading the queue.
+ *
+ * These tests measure the broker's own count of unacknowledged deliveries, so
+ * a consumer left over from another spec file does not merely add noise — it
+ * takes the message and acknowledges it, and the count this spec is waiting
+ * for never arrives. That is how the suite passed file-by-file and failed in
+ * one run.
+ */
+async function awaitExclusiveQueue(): Promise<void> {
+  const deadline = Date.now() + 30_000;
+  let others = await consumerCount(managementUrl, QUEUE_BETS);
+  while (others > 0 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    others = await consumerCount(managementUrl, QUEUE_BETS);
+  }
+
+  expect(others, `${QUEUE_BETS} still has a consumer that is not this spec's`).toBe(0);
+}
+
 async function startConsumer(): Promise<AmqpBroker> {
   const started = new AmqpBroker(testConfig());
   await started.onModuleInit();
@@ -66,6 +91,7 @@ async function startConsumer(): Promise<AmqpBroker> {
 
 beforeEach(async () => {
   release = undefined;
+  await awaitExclusiveQueue();
   await broker.purge(QUEUE_BETS, QUEUE_RETRY, QUEUE_PARKED);
   amqp = await startConsumer();
 }, 120_000);

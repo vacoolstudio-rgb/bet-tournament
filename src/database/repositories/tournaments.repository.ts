@@ -15,14 +15,6 @@ interface TournamentRow {
   created_at: Date;
 }
 
-const toRecord = (row: TournamentRow): TournamentRecord => ({
-  id: row.id,
-  code: row.code,
-  startsAt: row.starts_at,
-  endsAt: row.ends_at,
-  createdAt: row.created_at,
-});
-
 /** Postgres adapter for {@link TournamentsRepositoryPort}. */
 @Injectable()
 export class TournamentsRepository implements TournamentsRepositoryPort {
@@ -49,7 +41,7 @@ export class TournamentsRepository implements TournamentsRepositoryPort {
       throw new Error(`Upserting tournament "${code}" returned no row`);
     }
 
-    return toRecord(row);
+    return this.toRecord(row);
   }
 
   async findByCode({ code }: TournamentCodeQuery): Promise<TournamentRecord | null> {
@@ -59,6 +51,17 @@ export class TournamentsRepository implements TournamentsRepositoryPort {
     );
     const row = rows[0];
 
-    return row === undefined ? null : toRecord(row);
+    return row === undefined ? null : this.toRecord(row);
+  }
+
+  /** The tournament row as the domain reads it. */
+  private toRecord(row: TournamentRow): TournamentRecord {
+    return {
+      id: row.id,
+      code: row.code,
+      startsAt: row.starts_at,
+      endsAt: row.ends_at,
+      createdAt: row.created_at,
+    };
   }
 }

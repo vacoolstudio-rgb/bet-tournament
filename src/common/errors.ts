@@ -63,3 +63,26 @@ export class AmountOutOfRangeError extends PoisonMessageError {
     this.name = 'AmountOutOfRangeError';
   }
 }
+
+/**
+ * Configuration that cannot be used, phrased for whoever reads the logs.
+ *
+ * Raised instead of letting the ZodError out, because the raw one is forty
+ * lines of JSON — `code`, `expected`, `received`, a `path` array per issue —
+ * printed by the framework's exception handler after "Starting Nest
+ * application...", which makes a missing environment variable look like the
+ * framework crashed. Read in `main.ts` before the framework starts, and it
+ * carries every offending variable at once: one failed boot per
+ * misconfiguration, not one per variable.
+ */
+export class ConfigurationError extends Error {
+  constructor(readonly issues: readonly { path: string; message: string }[]) {
+    super(
+      [
+        'Configuration is invalid:',
+        ...issues.map(({ path, message }) => `  ${path}: ${message}`),
+      ].join('\n'),
+    );
+    this.name = 'ConfigurationError';
+  }
+}

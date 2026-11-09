@@ -6,6 +6,11 @@ import { tap } from 'rxjs/operators';
 import { METRICS } from './metrics.contract.js';
 import type { MetricsPort } from './metrics.contract.js';
 
+/** What a thrown request carries when it knows its own status. */
+interface StatusCarrier {
+  readonly status?: unknown;
+}
+
 /**
  * Records every finished HTTP request.
  *
@@ -13,16 +18,6 @@ import type { MetricsPort } from './metrics.contract.js';
  * routing and would have no route pattern to label with — only the URL, which
  * is a different time series per query string.
  */
-/** The matched route pattern, or a single constant when there is none. */
-function routeOf(request: Request): string {
-  const route: unknown = request.route;
-  if (typeof route !== 'object' || route === null || !('path' in route)) return 'unmatched';
-
-  const { path } = route;
-
-  return typeof path === 'string' ? path : 'unmatched';
-}
-
 @Injectable()
 export class HttpMetricsInterceptor implements NestInterceptor {
   constructor(@Inject(METRICS) private readonly metrics: MetricsPort) {}
@@ -35,32 +30,49 @@ export class HttpMetricsInterceptor implements NestInterceptor {
     const response = http.getResponse<Response>();
     const startedAt = performance.now();
 
-    const record = (status: number): void => {
-      this.metrics.observeHttpRequest({
-        method: request.method,
-        // The pattern, falling back to a constant rather than to the URL: an
-        // unmatched request must not mint a new label value. Express types
-        // `route` as `any`, so the shape is checked rather than asserted.
-        route: routeOf(request),
-        status,
-        seconds: (performance.now() - startedAt) / 1000,
-      });
-    };
-
     return next.handle().pipe(
       tap({
-        next: () => record(response.statusCode),
+        next: () => this.record(request, response.statusCode, startedAt),
         // A thrown request still finished, and it is the one worth graphing.
-        // The exception filter has not run yet, so the status comes from the
-        // error itself.
-        error: (error: unknown) => {
-          const status =
-            typeof error === 'object' && error !== null && 'status' in error
-              ? Number(error.status)
-              : 500;
-          record(Number.isFinite(status) ? status : 500);
-        },
+        // The exception filter has not run yet, so the response still says 200
+        // and the status has to come from the error itself.
+        error: (error: unknown) => this.record(request, this.statusOf(error), startedAt),
       }),
     );
+  }
+
+  private record(request: Request, status: number, startedAt: number): void {
+    this.metrics.observeHttpRequest({
+      method: request.method,
+      route: this.routeOf(request),
+      status,
+      seconds: (performance.now() - startedAt) / 1000,
+    });
+  }
+
+  /**
+   * The matched route pattern, or one constant when there is none.
+   *
+   * Never the URL: a path the router does not know is chosen by whoever asked
+   * for it, and a label made from it mints time series until the scrape falls
+   * over. Express types `route` as `any`, so the shape is checked rather than
+   * asserted.
+   */
+  private routeOf(request: Request): string {
+    const route: unknown = request.route;
+    if (typeof route !== 'object' || route === null || !('path' in route)) return 'unmatched';
+
+    const { path } = route;
+
+    return typeof path === 'string' ? path : 'unmatched';
+  }
+
+  /** An error's own status, or a server error when it claims nothing usable. */
+  private statusOf(error: unknown): number {
+    if (typeof error !== 'object' || error === null || !('status' in error)) return 500;
+
+    const status = Number((error as StatusCarrier).status);
+
+    return Number.isFinite(status) ? status : 500;
   }
 }

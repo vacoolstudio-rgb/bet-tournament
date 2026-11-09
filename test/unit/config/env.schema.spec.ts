@@ -1,4 +1,5 @@
-import { ConfigurationError, loadConfig } from '../../../src/config/app-config.js';
+import { ConfigurationError } from '../../../src/common/errors.js';
+import { loadConfig } from '../../../src/config/app-config.js';
 
 /** The minimum a valid environment has to carry. */
 function env(overrides: Record<string, string | undefined> = {}): NodeJS.ProcessEnv {

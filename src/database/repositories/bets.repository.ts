@@ -28,21 +28,6 @@ interface BetRow {
   updated_at: Date;
 }
 
-const toRecord = (row: BetRow): BetRecord => ({
-  tournamentId: row.tournament_id,
-  betId: row.bet_id,
-  playerId: row.player_id,
-  status: row.status,
-  currency: row.currency,
-  stake: row.stake,
-  winAmount: row.win_amount,
-  fxRate: row.fx_rate,
-  pointsAwarded: row.points_awarded,
-  settledAt: row.settled_at,
-  createdAt: row.created_at,
-  updatedAt: row.updated_at,
-});
-
 /** Postgres adapter for {@link BetsRepositoryPort}. */
 @Injectable()
 export class BetsRepository implements BetsRepositoryPort {
@@ -168,6 +153,24 @@ export class BetsRepository implements BetsRepositoryPort {
     );
     const row = rows[0];
 
-    return row === undefined ? null : toRecord(row);
+    return row === undefined ? null : this.toRecord(row);
+  }
+
+  /** The journal row as the domain reads it; the money columns stay text. */
+  private toRecord(row: BetRow): BetRecord {
+    return {
+      tournamentId: row.tournament_id,
+      betId: row.bet_id,
+      playerId: row.player_id,
+      status: row.status,
+      currency: row.currency,
+      stake: row.stake,
+      winAmount: row.win_amount,
+      fxRate: row.fx_rate,
+      pointsAwarded: row.points_awarded,
+      settledAt: row.settled_at,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
   }
 }
