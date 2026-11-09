@@ -204,6 +204,19 @@ async function main(): Promise<void> {
       ? `Готовы к возврату: ${replayed}, без известного routing key: ${skipped}`
       : `Возвращено: ${replayed}, пропущено: ${skipped}`,
   );
+
+  // Without this line the tool looks broken when it worked. A message whose
+  // cause is still in place goes round and parks again within seconds, so the
+  // parking queue holds the same count as before and the summary above reads
+  // like a lie. The returned copy carries `x-replayed-at`, which is how to
+  // tell "came back" from "never left".
+  if (!dryRun && replayed > 0) {
+    console.log(
+      'Причина должна быть устранена до возврата: иначе сообщение обработается\n' +
+        'снова, снова упадёт и запаркуется заново — у такой копии есть заголовок\n' +
+        'x-replayed-at, и счётчик попыток у неё начинается с единицы.',
+    );
+  }
 }
 
 if (
