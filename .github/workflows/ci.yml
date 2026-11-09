@@ -91,6 +91,46 @@ jobs:
           curl -fsS localhost:3000/metrics | grep -q bet_events_acknowledged_total
           curl -fsS localhost:3000/leaderboard | grep -q '"tournament"'
 
+      # The runtime image deletes typescript, ts-node and @swc/core, which
+      # `typeorm` and `@nestjs/swagger` drag in but do not need once compiled.
+      # Both halves of that claim are checked: that they are gone, and that
+      # nothing needs them — `/api/docs-json` above is the Swagger path, the
+      # one that would fail with MODULE_NOT_FOUND where local dev works.
+      - name: the runtime image carries no build tooling
+        run: |
+          docker compose run --rm --no-deps --entrypoint sh app -c '
+            for gone in typescript ts-node @swc/core; do
+              if [ -e "node_modules/$gone" ]; then
+                echo "node_modules/$gone is still in the runtime image" >&2
+                exit 1
+              fi
+            done
+            echo "typescript, ts-node and @swc/core are absent, as intended"
+          '
+
+      # Booting is not the job. An event published straight into the broker's
+      # management API — no dependencies on the runner — has to come out of the
+      # image as points, with the money arithmetic intact: 10.40 EUR at 1.08 is
+      # 11.232 and not 11.23.
+      - name: the image scores a bet, not just answers
+        run: |
+          BODY='{\"betId\":\"aa111111-1111-4111-8111-111111111111\",\"playerId\":\"bb222222-2222-4222-8222-222222222222\",\"currency\":\"EUR\",\"stake\":\"10.0000\",\"winAmount\":\"10.4000\",\"settledAt\":\"2026-11-15T12:00:00.000Z\"}'
+          curl -fsS -u tournament:tournament -X POST -H 'content-type: application/json' \
+            -d "{\"properties\":{\"delivery_mode\":2},\"routing_key\":\"bet.settled\",\"payload\":\"$BODY\",\"payload_encoding\":\"string\"}" \
+            http://localhost:15672/api/exchanges/%2F/bets/publish | grep -q '"routed":true'
+
+          for attempt in $(seq 1 30); do
+            if curl -fsS localhost:3000/leaderboard | grep -q '"pointsExact":"11.232000"'; then
+              echo "scored 11.232000 for 10.40 EUR at 1.08"
+              curl -fsS localhost:3000/metrics | grep 'bet_events_acknowledged_total{reason="scored"}'
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "the image did not score the event within 30s" >&2
+          curl -fsS localhost:3000/leaderboard >&2
+          exit 1
+
       - name: logs on failure
         if: failure()
         run: docker compose logs --no-color --tail=200
