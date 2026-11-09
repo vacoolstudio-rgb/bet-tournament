@@ -55,4 +55,31 @@ describe('the documents the task asks for', () => {
     // And the alternatives that were weighed and dropped.
     expect(decisions).toMatch(/Redis|ZSET/);
   });
+  it('keeps the index of DECISIONS in step with its own headings', () => {
+    // The index is the first thing a reader uses and the easiest thing to let
+    // rot: a decision added at the end is a decision nobody finds. The same
+    // rot had already happened in PLAN.md, where three statements outlived the
+    // measurement that refuted them.
+    const decisions = read('DECISIONS.md');
+
+    const headings = [...decisions.matchAll(/^## (\d+)\. (.+)$/gm)];
+    expect(headings.length).toBeGreaterThan(10);
+
+    for (const [, number, title] of headings) {
+      // The title as written, not a slug: a renamed heading has to be renamed
+      // in the index too, and a link whose text no longer matches is the bug
+      // this catches.
+      expect(decisions, `decision ${number} is missing from the index`).toContain(
+        `${number}. [${title}](#`,
+      );
+    }
+
+    // And nothing in the index that no longer exists as a heading.
+    const indexed = [...decisions.matchAll(/^(\d+)\. \[(.+?)\]\(#/gm)];
+    for (const [, number, title] of indexed) {
+      expect(decisions, `the index points at a decision ${number} that is gone`).toContain(
+        `## ${number}. ${title}`,
+      );
+    }
+  });
 });
